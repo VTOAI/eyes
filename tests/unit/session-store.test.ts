@@ -16,16 +16,20 @@ describe("SessionStore", () => {
     store.add({ role: "user", content: "c", timestamp: 3 });
     store.add({ role: "user", content: "d", timestamp: 4 });
     store.add({ role: "user", content: "e", timestamp: 5 });
-    expect(store.getAll().length).toBeLessThan(5);
-    expect(store.getAll()[0].content).toBe("b"); // "a" was pruned, "b" is first kept
+    const msgs = store.getAll();
+    expect(msgs).toHaveLength(4);
+    expect(msgs[0].content).toBe("b"); // "a" was pruned, "b" is first kept
   });
 
   it("should keep at least 4 messages even when over limit", () => {
-    const store = new SessionStore(1);
-    store.add({ role: "user", content: "a", timestamp: 1 });
-    store.add({ role: "user", content: "b", timestamp: 2 });
-    store.add({ role: "user", content: "c", timestamp: 3 });
-    store.add({ role: "user", content: "d", timestamp: 4 });
+    const store = new SessionStore(1); // maxChars = 4
+    // Each message has content longer than the maxChars limit
+    store.add({ role: "user", content: "aaaaa", timestamp: 1 });
+    store.add({ role: "user", content: "bbbbb", timestamp: 2 });
+    store.add({ role: "user", content: "ccccc", timestamp: 3 });
+    store.add({ role: "user", content: "ddddd", timestamp: 4 });
+    store.add({ role: "user", content: "eeeee", timestamp: 5 });
+    // Even though total chars exceeds limit, the guard keeps at least 4
     expect(store.getAll()).toHaveLength(4);
   });
 
