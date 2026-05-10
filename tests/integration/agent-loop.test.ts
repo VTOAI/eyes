@@ -26,6 +26,7 @@ function createMockMCP(toolResults: Record<string, string>): MCPRegistry {
   return {
     listAllTools: vi.fn().mockResolvedValue([{ name: "test_tool", description: "A test tool", inputSchema: { type: "object" } }]),
     callTool: vi.fn().mockImplementation(async (name: string) => toolResults[name] || `Result from ${name}`),
+    listServers: vi.fn().mockReturnValue([]),
     initialize: vi.fn(),
     close: vi.fn(),
   } as any;

@@ -8,11 +8,26 @@ export interface MCPServerConfig {
   command?: string;
   args?: string[];
   url?: string;
+  env?: Record<string, string>;
+}
+
+export interface GatewayConfig {
+  type: string;
+  name: string;
+  [key: string]: unknown;
+}
+
+export interface ChannelConfig {
+  type: string;
+  name: string;
+  [key: string]: unknown;
 }
 
 export interface AppConfig {
   agent: AgentConfig;
   mcpServers: MCPServerConfig[];
+  gateways: GatewayConfig[];
+  channels: ChannelConfig[];
 }
 
 const HOME_CONFIG_DIR = join(homedir(), ".eyes");
@@ -69,7 +84,10 @@ interface RawConfigJson {
     command?: string;
     args?: string[];
     url?: string;
+    env?: Record<string, string>;
   }>;
+  gateways?: Array<Record<string, unknown>>;
+  channels?: Array<Record<string, unknown>>;
 }
 
 function loadConfigJson(): RawConfigJson | null {
@@ -99,6 +117,7 @@ function parseMCPServersFromFile(path: string): MCPServerConfig[] {
       command: cfg.command,
       args: cfg.args,
       url: cfg.url,
+      env: cfg.env,
     }));
   } catch (e) {
     console.error(`Warning: failed to parse ${path}:`, e);
@@ -121,6 +140,7 @@ function resolveMCPServers(rawCfg?: RawConfigJson | null): MCPServerConfig[] {
       command: cfg.command,
       args: cfg.args,
       url: cfg.url,
+      env: cfg.env,
     }));
   }
 
@@ -134,6 +154,7 @@ export function addMCPServerToConfig(cfg: MCPServerConfig): void {
     command: cfg.command,
     args: cfg.args,
     url: cfg.url,
+    env: cfg.env,
   };
   const dir = join(homedir(), ".eyes");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -163,6 +184,18 @@ export function loadConfig(): AppConfig {
     );
   }
 
+  const gateways = (rawCfg?.gateways ?? []).map((g) => ({
+    type: String(g.type ?? ""),
+    name: String(g.name ?? g.type ?? ""),
+    ...Object.fromEntries(Object.entries(g).filter(([k]) => k !== "type" && k !== "name")),
+  })) as GatewayConfig[];
+
+  const channels = (rawCfg?.channels ?? []).map((c) => ({
+    type: String(c.type ?? ""),
+    name: String(c.name ?? c.type ?? ""),
+    ...Object.fromEntries(Object.entries(c).filter(([k]) => k !== "type" && k !== "name")),
+  })) as ChannelConfig[];
+
   return {
     agent: {
       llmType,
@@ -172,5 +205,7 @@ export function loadConfig(): AppConfig {
       maxIterations,
     },
     mcpServers: resolveMCPServers(rawCfg),
+    gateways,
+    channels,
   };
 }

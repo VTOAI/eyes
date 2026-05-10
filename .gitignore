@@ -2,5 +2,6 @@ node_modules/
 dist/
 .env
 .eyes/.env
+.eyes/config.json
 *.log
 .superpowers/

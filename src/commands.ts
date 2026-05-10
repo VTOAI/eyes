@@ -4,7 +4,7 @@ import { LLMClient } from "./llm/client.js";
 import { MCPServerInstaller } from "./mcp/installer.js";
 import { SessionManager } from "./session/manager.js";
 
-export const COMMANDS = ["/help", "/config", "/mcp", "/doctor", "/install", "/sessions", "/exit", "/clear"];
+export const COMMANDS = ["/help", "/config", "/mcp", "/doctor", "/install", "/sessions", "/exit", "/clear", "/gateways"];
 
 export interface CommandContext {
   config: AppConfig;
@@ -90,6 +90,32 @@ function cmdSessions(ctx: CommandContext, args: string[]): string {
   }
 }
 
+function cmdGateways(ctx: CommandContext): string {
+  const { gateways, channels } = ctx.config;
+  const lines: string[] = [];
+
+  if (gateways.length === 0 && channels.length === 0) {
+    return "No gateways or notification channels configured. Add them to ~/.eyes/config.json.";
+  }
+
+  if (gateways.length > 0) {
+    lines.push(`Gateways: ${gateways.length} configured`);
+    for (const g of gateways) {
+      lines.push(`  ${g.name} (${g.type})`);
+    }
+  }
+
+  if (channels.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(`Notification Channels: ${channels.length} configured`);
+    for (const c of channels) {
+      lines.push(`  ${c.name} (${c.type})`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function cmdHelp(): string {
   return [
     "Available commands:",
@@ -98,6 +124,7 @@ function cmdHelp(): string {
     "  /mcp       List connected MCP servers and tools",
     "  /doctor    Check configuration and connectivity",
     "  /install   Install an MCP server by description",
+    "  /gateways  List configured gateways and notification channels",
     "  /sessions  Manage sessions (list, new, switch, delete, rename)",
     "  /exit      Exit the CLI",
     "  /clear     Clear session history",
@@ -197,6 +224,8 @@ export async function executeCommand(input: string, ctx: CommandContext): Promis
       return cmdHelp();
     case "/config":
       return cmdConfig(ctx);
+    case "/gateways":
+      return cmdGateways(ctx);
     case "/mcp":
       return await cmdMcp(ctx);
     case "/doctor":

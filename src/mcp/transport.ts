@@ -1,5 +1,6 @@
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { MCPServerConfig } from "../config/index.js";
 
 export function createTransport(config: MCPServerConfig): Transport {
@@ -7,10 +8,15 @@ export function createTransport(config: MCPServerConfig): Transport {
     return new StdioClientTransport({
       command: config.command,
       args: config.args || [],
+      env: config.env,
     });
   }
 
+  if (config.url) {
+    return new SSEClientTransport(new URL(config.url));
+  }
+
   throw new Error(
-    `MCP server "${config.name}" has no command configured. Only stdio transport is supported currently.`
+    `MCP server "${config.name}" has neither command nor URL configured.`
   );
 }

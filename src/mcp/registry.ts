@@ -8,10 +8,22 @@ interface ServerConnection {
   name: string;
 }
 
+interface ToolWithServer {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  serverName: string;
+}
+
 export class MCPRegistry {
   private connections: ServerConnection[] = [];
   private toolMap: Map<string, ServerConnection> = new Map();
-  private cachedTools: Tool[] = [];
+  private cachedTools: ToolWithServer[] = [];
+  private localToolHandlers: Map<string, {
+    description: string;
+    inputSchema: Record<string, unknown>;
+    handler: (args: Record<string, unknown>) => Promise<string>;
+  }> = new Map();
 
   async initialize(servers: MCPServerConfig[]): Promise<void> {
     const results = await Promise.allSettled(
@@ -25,7 +37,26 @@ export class MCPRegistry {
     }
   }
 
-  private async connectServer(cfg: MCPServerConfig): Promise<void> {
+  registerLocalTool(
+    name: string,
+    description: string,
+    inputSchema: Record<string, unknown>,
+    handler: (args: Record<string, unknown>) => Promise<string>
+  ): void {
+    this.localToolHandlers.set(name, { description, inputSchema, handler });
+  }
+
+  async connectServer(cfg: MCPServerConfig): Promise<void> {
+    // Remove existing server with same name
+    const existing = this.connections.find((c) => c.name === cfg.name);
+    if (existing) {
+      this.toolMap.forEach((conn, toolName) => {
+        if (conn.name === cfg.name) this.toolMap.delete(toolName);
+      });
+      this.cachedTools = this.cachedTools.filter((t) => t.serverName !== cfg.name);
+      this.connections = this.connections.filter((c) => c.name !== cfg.name);
+      await existing.client.close().catch(() => {});
+    }
     const transport = createTransport(cfg);
     const client = new Client(
       { name: "eyes", version: "0.1.0" },
@@ -47,6 +78,7 @@ export class MCPRegistry {
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
+          serverName: cfg.name,
         });
       }
 
@@ -58,13 +90,41 @@ export class MCPRegistry {
   }
 
   listAllTools(): Tool[] {
-    return [...this.cachedTools];
+    const mcpTools = this.cachedTools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }));
+    const localTools = [...this.localToolHandlers.entries()].map(([name, t]) => ({
+      name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }));
+    return [...localTools, ...mcpTools] as Tool[];
+  }
+
+  listServers(): Array<{ name: string; toolCount: number }> {
+    const counts = new Map<string, number>();
+    for (const t of this.cachedTools) {
+      counts.set(t.serverName, (counts.get(t.serverName) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([name, toolCount]) => ({ name, toolCount }));
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<string> {
+    const local = this.localToolHandlers.get(name);
+    if (local) {
+      try {
+        return await local.handler(args);
+      } catch (e) {
+        return `Error calling local tool "${name}": ${e}`;
+      }
+    }
+
     const conn = this.toolMap.get(name);
     if (!conn) {
-      return `Error: Tool "${name}" not found. Available tools: ${[...this.toolMap.keys()].join(", ")}`;
+      const all = [...this.localToolHandlers.keys(), ...this.toolMap.keys()].join(", ");
+      return `Error: Tool "${name}" not found. Available tools: ${all}`;
     }
 
     try {
@@ -88,5 +148,6 @@ export class MCPRegistry {
     this.connections = [];
     this.toolMap.clear();
     this.cachedTools = [];
+    this.localToolHandlers.clear();
   }
 }

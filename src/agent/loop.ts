@@ -12,6 +12,7 @@ export interface AgentHooks {
   onStep?: (step: { type: "thinking" | "tool_call" | "tool_result"; content?: string; name?: string; args?: Record<string, unknown> }) => void;
   onToken?: (token: string) => void;
   onUsage?: (usage: Usage | undefined, durationMs: number) => void;
+  onComplete?: (response: string) => void;
 }
 
 export class Agent {
@@ -66,7 +67,13 @@ export class Agent {
 
       if (response.type === "text") {
         if (!response.content.trim()) continue;
-        this.session.add({ role: "assistant", content: response.content, timestamp: Date.now() });
+        this.session.add({
+          role: "assistant",
+          content: response.content,
+          timestamp: Date.now(),
+          ...(response.reasoningContent ? { reasoningContent: response.reasoningContent } : {}),
+        });
+        hooks?.onComplete?.(response.content);
         return response.content;
       }
 
@@ -85,6 +92,7 @@ export class Agent {
         toolName: tc.name,
         args: tc.args,
         timestamp: Date.now(),
+        ...(response.reasoningContent ? { reasoningContent: response.reasoningContent } : {}),
       });
       this.session.add({
         role: "tool_result",
@@ -97,6 +105,7 @@ export class Agent {
 
     const timeoutMsg = "I've reached the maximum number of tool call iterations. Please try simplifying your request.";
     this.session.add({ role: "assistant", content: timeoutMsg, timestamp: Date.now() });
+    hooks?.onComplete?.(timeoutMsg);
     return timeoutMsg;
   }
 }

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
-import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { loadConfig, AppConfig } from "./config/index.js";
 import { OpenAICompatibleClient } from "./llm/openai.js";
 import { AnthropicClient } from "./llm/anthropic.js";
@@ -12,6 +13,9 @@ import { MCPServerInstaller, getKnownServerDescriptions } from "./mcp/installer.
 import { SessionManager } from "./session/manager.js";
 import { Agent, AgentHooks } from "./agent/loop.js";
 import { isCommand, executeCommand, COMMANDS } from "./commands.js";
+import { NotificationChannel } from "./channel/types.js";
+import { MessageGateway } from "./gateway/types.js";
+import { PerChatSessionRouter } from "./gateway/session-router.js";
 
 // ANSI escape codes
 const RESET = "\x1b[0m";
@@ -46,7 +50,7 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-function createAgentHooks(): AgentHooks {
+function createAgentHooks(channels?: NotificationChannel[]): AgentHooks {
   let thinking = false;
   let thinkingTimer: ReturnType<typeof setInterval> | null = null;
   const frames = ["◌", "◍", "◎"];
@@ -77,8 +81,33 @@ function createAgentHooks(): AgentHooks {
         const shortArgs = args.length > 200 ? args.slice(0, 200) + "..." : args;
         process.stdout.write(`\n  ${DIM}${YELLOW}⚙ ${step.name}${RESET}${DIM}(${shortArgs})${RESET}\n`);
       } else if (step.type === "tool_result") {
-        const preview = step.content ? step.content.slice(0, 500) : "(empty)";
-        process.stdout.write(`  ${DIM}⏺ ${preview.replace(/\n/g, "\\n")}${RESET}\n`);
+        const raw = step.content || "";
+        let formatted = raw;
+
+        // Try to pretty-print JSON results
+        try {
+          const parsed = JSON.parse(raw);
+          formatted = JSON.stringify(parsed, null, 2);
+        } catch {
+          // Not JSON — use as-is
+        }
+
+        const lines = formatted.split("\n");
+        const maxLines = 20;
+        const maxLen = 2000;
+
+        if (lines.length <= maxLines && formatted.length <= maxLen) {
+          for (const line of lines) {
+            process.stdout.write(`  ${DIM}│ ${RESET}${line}\n`);
+          }
+        } else {
+          // Show truncated preview
+          const truncated = formatted.slice(0, maxLen);
+          for (const line of truncated.split("\n").slice(0, maxLines)) {
+            process.stdout.write(`  ${DIM}│ ${RESET}${line}\n`);
+          }
+          process.stdout.write(`  ${DIM}│ ... (${raw.length} chars total)${RESET}\n`);
+        }
       }
     },
     onToken: (token: string) => {
@@ -101,6 +130,13 @@ function createAgentHooks(): AgentHooks {
         process.stdout.write(`  ${DIM}⎿ ${sec}s${RESET}\n`);
       }
     },
+    onComplete: channels?.length
+      ? (response: string) => {
+          for (const ch of channels) {
+            ch.send(response).catch(() => {});
+          }
+        }
+      : undefined,
   };
 }
 
@@ -176,6 +212,7 @@ const CLI_COMMANDS: Record<string, string> = {
   sessions: "/sessions",
   install: "/install",
   help: "/help",
+  gateways: "/gateways",
 };
 
 function printHelp(): void {
@@ -190,6 +227,11 @@ function printHelp(): void {
   console.log(`  eyes doctor         Check configuration and connectivity`);
   console.log(`  eyes install <desc> Install an MCP server`);
   console.log(`  eyes sessions list  List saved sessions`);
+  console.log(`  eyes serve          Start gateways in background (default)`);
+  console.log(`  eyes serve console  Start gateways in foreground`);
+  console.log(`  eyes serve stop     Stop background serve`);
+  console.log(`  eyes serve status   Check if serve is running`);
+  console.log(`  eyes gateways       List configured gateways and channels`);
   console.log();
   console.log(`${DIM}All subcommands also work as in-session /commands.${RESET}`);
   console.log(`${DIM}Config: ~/.eyes/config.json${RESET}`);
@@ -207,6 +249,7 @@ async function runCliCommand(subcmd: string, args: string[]): Promise<void> {
   const llm = createLLMClient(config);
   const mcp = new MCPRegistry();
   const installer = new MCPServerInstaller(mcp, llm);
+  await mcp.initialize(config.mcpServers);
 
   const slashCmd = CLI_COMMANDS[subcmd];
   const input = args.length > 0 ? `${slashCmd} ${args.join(" ")}` : slashCmd;
@@ -219,6 +262,124 @@ async function runCliCommand(subcmd: string, args: string[]): Promise<void> {
     process.exit(1);
   } finally {
     await mcp.close();
+  }
+}
+
+const PID_FILE = join(homedir(), ".eyes", "serve.pid");
+
+function writePid(): void {
+  const dir = join(homedir(), ".eyes");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(PID_FILE, String(process.pid));
+}
+
+function readPid(): number | null {
+  try {
+    return Number(readFileSync(PID_FILE, "utf-8").trim()) || null;
+  } catch {
+    return null;
+  }
+}
+
+function removePid(): void {
+  try { unlinkSync(PID_FILE); } catch {}
+}
+
+function isProcessRunning(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function runServeCommand(config: AppConfig, daemon = false): Promise<void> {
+  const { createGateway } = await import("./gateway/factory.js");
+  const { createChannel } = await import("./channel/factory.js");
+
+  const llm = createLLMClient(config);
+  const mcp = new MCPRegistry();
+
+  if (daemon) {
+    // Suppress MCP connection warnings in daemon mode
+    await mcp.initialize(config.mcpServers);
+  } else {
+    await mcp.initialize(config.mcpServers);
+  }
+
+  const channels = await Promise.all(config.channels.map((c) => createChannel(c)));
+  const gateways: MessageGateway[] = [];
+  const sessions = new PerChatSessionRouter();
+
+  for (const g of config.gateways) {
+    try {
+      const gateway = await createGateway(
+        g, llm, mcp, sessions,
+        config.agent.maxIterations,
+        getKnownServerDescriptions(),
+      );
+      gateways.push(gateway);
+
+      if ("listen" in gateway && typeof (gateway as any).listen === "function") {
+        (gateway as any).listen();
+      }
+
+      await gateway.start();
+      if (!daemon) console.log(`Gateway "${gateway.name}" started.`);
+    } catch (e: any) {
+      if (!daemon) console.error(`${RED}Gateway "${g.name}" failed to start: ${e.message}${RESET}`);
+    }
+  }
+
+  if (!daemon) {
+    if (gateways.length === 0) {
+      console.log(`${YELLOW}No gateways configured. Add gateways to ~/.eyes/config.json.${RESET}`);
+    }
+    console.log(`${DIM}eyes serve running. ${gateways.length} gateway(s), ${channels.length} channel(s). Ctrl+C to stop.${RESET}\n`);
+  }
+
+  writePid();
+
+  const cleanup = async () => {
+    for (const g of gateways) {
+      await g.stop().catch(() => {});
+    }
+    await mcp.close();
+    removePid();
+  };
+
+  process.once("SIGINT", () => { cleanup().then(() => process.exit(0)); });
+  process.once("SIGTERM", () => { cleanup().then(() => process.exit(0)); });
+
+  // Keep alive
+  await new Promise(() => {});
+}
+
+function startDaemon(): void {
+  // Re-spawn ourselves as a detached daemon
+  const script = process.argv[1];
+  const child = spawn("node", [script, "serve", "--daemon"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  console.log(`${DIM}eyes serve started in background (PID: ${child.pid})${RESET}`);
+  console.log(`${DIM}Stop: eyes serve stop  ·  Status: eyes serve status${RESET}`);
+}
+
+function stopDaemon(): void {
+  const pid = readPid();
+  if (!pid || !isProcessRunning(pid)) {
+    console.log(`${YELLOW}No running eyes serve process found.${RESET}`);
+    removePid();
+    return;
+  }
+  process.kill(pid, "SIGTERM");
+  console.log(`${DIM}Sent stop signal to PID ${pid}.${RESET}`);
+}
+
+function statusDaemon(): void {
+  const pid = readPid();
+  if (pid && isProcessRunning(pid)) {
+    console.log(`${GREEN}eyes serve is running (PID: ${pid})${RESET}`);
+  } else {
+    console.log(`${YELLOW}eyes serve is not running.${RESET}`);
   }
 }
 
@@ -235,6 +396,49 @@ async function main() {
   // Handle help (also keep -h/--help for muscle memory)
   if (subcmd === "help" || subcmd === "-h" || subcmd === "--help") {
     printHelp();
+    process.exit(0);
+  }
+
+  // Handle "serve" — start gateways (background by default)
+  if (subcmd === "serve" || subcmd === "--serve") {
+    const mode = process.argv[3];
+
+    if (mode === "stop") {
+      stopDaemon();
+      process.exit(0);
+    }
+
+    if (mode === "status") {
+      statusDaemon();
+      process.exit(0);
+    }
+
+    if (mode === "console") {
+      const config = loadConfig();
+      await runServeCommand(config);
+      process.exit(0);
+    }
+
+    // --daemon flag: internal, called by startDaemon
+    if (process.argv.includes("--daemon")) {
+      const config = loadConfig();
+      await runServeCommand(config, true);
+      process.exit(0);
+    }
+
+    // Default: background
+    const pid = readPid();
+    if (pid && isProcessRunning(pid)) {
+      console.log(`${YELLOW}eyes serve is already running (PID: ${pid}).${RESET}`);
+      console.log(`${DIM}Use 'eyes serve console' for foreground or 'eyes serve stop' to restart.${RESET}`);
+      process.exit(0);
+    }
+    const config = loadConfig();
+    if (config.gateways.length === 0) {
+      console.log(`${RED}No gateways configured. Add gateways to ~/.eyes/config.json.${RESET}`);
+      process.exit(1);
+    }
+    startDaemon();
     process.exit(0);
   }
 
@@ -258,6 +462,7 @@ async function main() {
   const llm = createLLMClient(config);
   const mcp = new MCPRegistry();
   const installer = new MCPServerInstaller(mcp, llm);
+  await mcp.initialize(config.mcpServers);
 
   let sessionManager: SessionManager;
   try {
@@ -287,6 +492,41 @@ async function main() {
     },
     async (args) => installer.install(String(args.description || "")),
   );
+
+  // Register send_notification tool if channels are configured
+  if (config.channels.length > 0) {
+    mcp.registerLocalTool(
+      "send_notification",
+      `Send a message to a notification channel (e.g., Feishu group chat). Available channels: ${config.channels.map((c) => c.name).join(", ")}.`,
+      {
+        type: "object",
+        properties: {
+          channel: {
+            type: "string",
+            description: `The notification channel name. One of: ${config.channels.map((c) => c.name).join(", ")}`,
+          },
+          message: {
+            type: "string",
+            description: "The message text to send",
+          },
+        },
+        required: ["channel", "message"],
+      },
+      async (args) => {
+        const name = String(args.channel || "");
+        const channel = channelInstances.find((ch) => ch.name === name);
+        if (!channel) {
+          return `Unknown channel "${name}". Available: ${channelInstances.map((c) => c.name).join(", ")}`;
+        }
+        try {
+          await channel.send(String(args.message));
+          return `Message sent to "${name}" successfully.`;
+        } catch (e) {
+          return `Failed to send to "${name}": ${e}`;
+        }
+      },
+    );
+  }
 
   console.log(`${DIM}eyes ${config.agent.model} · /help for commands · double-ESC to abort${RESET}\n`);
 
@@ -409,6 +649,13 @@ async function main() {
   };
   process.stdin.on("keypress", onKeyPress);
 
+  // Pre-create notification channels for hooks & tools
+  let channelInstances: NotificationChannel[] = [];
+  if (config.channels.length > 0) {
+    const { createChannel } = await import("./channel/factory.js");
+    channelInstances = await Promise.all(config.channels.map((c) => createChannel(c)));
+  }
+
   try {
     while (true) {
       const input = await rl.question(getPrompt());
@@ -436,7 +683,7 @@ async function main() {
 
       const ac = new AbortController();
       currentAbort = ac;
-      const hooks = createAgentHooks();
+      const hooks = createAgentHooks(channelInstances);
 
       try {
         await agent.run(actualInput, hooks, ac.signal);

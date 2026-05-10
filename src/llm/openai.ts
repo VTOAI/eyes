@@ -21,16 +21,24 @@ function toOpenAIMessages(msgs: Message[]): OpenAI.Chat.ChatCompletionMessagePar
     }
 
     if (isAssistantToolCall(m)) {
-      return {
+      const msg: Record<string, unknown> = {
         role: "assistant",
         content: null,
         tool_calls: [
           { id: m.toolCallId, type: "function", function: { name: m.toolName, arguments: JSON.stringify(m.args) } },
         ],
-      } as OpenAI.Chat.ChatCompletionMessageParam;
+      };
+      if (m.reasoningContent) {
+        (msg as any).reasoning_content = m.reasoningContent;
+      }
+      return msg as unknown as OpenAI.Chat.ChatCompletionMessageParam;
     }
 
-    return { role: m.role as "user" | "assistant", content: m.content };
+    const msg: Record<string, unknown> = { role: m.role as "user" | "assistant", content: m.content };
+    if ("reasoningContent" in m && m.reasoningContent) {
+      (msg as any).reasoning_content = m.reasoningContent;
+    }
+    return msg as unknown as OpenAI.Chat.ChatCompletionMessageParam;
   });
 }
 
@@ -72,6 +80,8 @@ export class OpenAICompatibleClient implements LLMClient {
         usage = { inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens };
       }
 
+      const reasoningContent = (choice.message as any).reasoning_content as string | undefined;
+
       if (choice.finish_reason === "tool_calls" && choice.message.tool_calls) {
         const tc = choice.message.tool_calls[0];
         const toolCall: ToolCall = {
@@ -79,10 +89,10 @@ export class OpenAICompatibleClient implements LLMClient {
           name: tc.function.name,
           args: JSON.parse(tc.function.arguments || "{}"),
         };
-        return { type: "tool_call", toolCall, usage };
+        return { type: "tool_call", toolCall, usage, ...(reasoningContent ? { reasoningContent } : {}) };
       }
 
-      return { type: "text", content: choice.message.content || "", usage };
+      return { type: "text", content: choice.message.content || "", usage, ...(reasoningContent ? { reasoningContent } : {}) };
     }
 
     // Streaming path
@@ -92,6 +102,7 @@ export class OpenAICompatibleClient implements LLMClient {
     );
 
     let content = "";
+    let reasoningContent = "";
     const toolAccums = new Map<number, { id: string; name: string; args: string }>();
     let usage: Usage | undefined;
 
@@ -105,15 +116,19 @@ export class OpenAICompatibleClient implements LLMClient {
         }
         continue;
       }
-      const delta = choice.delta;
+      const delta = choice.delta as Record<string, unknown>;
 
       if (delta.content) {
-        content += delta.content;
-        callbacks?.onToken?.(delta.content);
+        content += delta.content as string;
+        callbacks?.onToken?.(delta.content as string);
+      }
+
+      if (delta.reasoning_content) {
+        reasoningContent += delta.reasoning_content as string;
       }
 
       if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
+        for (const tc of delta.tool_calls as any[]) {
           const idx = tc.index;
           if (!toolAccums.has(idx)) {
             toolAccums.set(idx, { id: "", name: "", args: "" });
@@ -134,6 +149,7 @@ export class OpenAICompatibleClient implements LLMClient {
             type: "tool_call",
             toolCall: { id: first.id, name: first.name, args: JSON.parse(first.args || "{}") },
             usage,
+            ...(reasoningContent ? { reasoningContent } : {}),
           };
         } catch {
           // JSON parse failed — treat as text
@@ -141,6 +157,6 @@ export class OpenAICompatibleClient implements LLMClient {
       }
     }
 
-    return { type: "text", content, usage };
+    return { type: "text", content, usage, ...(reasoningContent ? { reasoningContent } : {}), };
   }
 }

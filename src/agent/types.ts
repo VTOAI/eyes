@@ -5,8 +5,8 @@ export type { Tool };
 export type Role = "user" | "assistant" | "tool_result";
 
 export type Message =
-  | { role: "user" | "assistant"; content: string; timestamp: number }
-  | { role: "assistant"; content: string; toolCallId: string; toolName: string; args: Record<string, unknown>; timestamp: number }
+  | { role: "user" | "assistant"; content: string; timestamp: number; reasoningContent?: string }
+  | { role: "assistant"; content: string; toolCallId: string; toolName: string; args: Record<string, unknown>; timestamp: number; reasoningContent?: string }
   | { role: "tool_result"; content: string; toolCallId: string; toolName: string; timestamp: number };
 
 export interface ToolCall {
@@ -21,8 +21,8 @@ export interface Usage {
 }
 
 export type LLMResponse =
-  | { type: "text"; content: string; usage?: Usage }
-  | { type: "tool_call"; toolCall: ToolCall; usage?: Usage };
+  | { type: "text"; content: string; usage?: Usage; reasoningContent?: string }
+  | { type: "tool_call"; toolCall: ToolCall; usage?: Usage; reasoningContent?: string };
 
 export interface SessionMetadata {
   id: string;
