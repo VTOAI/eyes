@@ -4,13 +4,10 @@ export type { Tool };
 
 export type Role = "user" | "assistant" | "tool_result";
 
-export interface Message {
-  role: Role;
-  content: string;
-  toolCallId?: string;
-  toolName?: string;
-  timestamp: number;
-}
+export type Message =
+  | { role: "user" | "assistant"; content: string; timestamp: number }
+  | { role: "assistant"; content: string; toolCallId: string; toolName: string; timestamp: number }
+  | { role: "tool_result"; content: string; toolCallId: string; toolName: string; timestamp: number };
 
 export interface ToolCall {
   id: string;

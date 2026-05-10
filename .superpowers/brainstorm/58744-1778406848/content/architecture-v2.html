@@ -1,0 +1,62 @@
+<h2>方案 B 详细架构</h2>
+<p class="subtitle">Claude Code 启发式分层设计</p>
+
+<div class="section">
+  <div style="background: #f5f5f5; padding: 1.5rem; border-radius: 8px; font-family: monospace; font-size: 13px; line-height: 1.6; overflow-x: auto;">
+    <pre style="white-space: pre; margin: 0;">
+┌──────────────────────────────────────────────────────────┐
+│  Layer 1: 企微网关 (Gateway)                               │
+│  ┌────────────────┐  ┌────────────────┐                   │
+│  │  回调验证/签名   │  │  消息解析/编码   │                   │
+│  └────────────────┘  └────────────────┘                   │
+├──────────────────────────────────────────────────────────┤
+│  Layer 2: 会话管理 (Session Manager)                       │
+│  ┌────────────────┐  ┌────────────────┐                   │
+│  │  会话 CRUD      │  │  上下文窗口管理  │                   │
+│  │  (Redis)        │  │  (滑动窗口/摘要) │                   │
+│  └────────────────┘  └────────────────┘                   │
+├──────────────────────────────────────────────────────────┤
+│  Layer 3: Agent 核心 (Core)                                │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │           ReAct Loop (while-true)                   │   │
+│  │  LLM 调用 → 解析响应 → 执行 Tool → 结果回填 → 继续   │   │
+│  └────────────────────────────────────────────────────┘   │
+│  ┌──────────────┐  ┌──────────────┐                       │
+│  │  LLM Client   │  │  Tool Router │                       │
+│  │  (API 调用)    │  │  (分发执行)   │                       │
+│  └──────────────┘  └──────────────┘                       │
+├──────────────────────────────────────────────────────────┤
+│  Layer 4: MCP 扩展 (Extension)                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
+│  │  MCP Client   │  │  MCP Client   │  │  MCP Client   │   │
+│  │  Prometheus   │  │  观测云       │  │  FlashDuty   │    │
+│  └──────────────┘  └──────────────┘  └──────────────┘    │
+├──────────────────────────────────────────────────────────┤
+│  Layer X:  Subagent (可选)                                 │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │  并行查询: 同时查 Prometheus + 观测云 + FlashDuty    │   │
+│  │  每个 Subagent 有独立上下文，返回摘要到主循环          │   │
+│  └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+    </pre>
+  </div>
+</div>
+
+<div class="section">
+  <h3>数据流</h3>
+  <div style="background: #f5f5f5; padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 13px;">
+    <pre style="margin: 0;">
+用户发消息 → 企微回调 → Gateway(验签+解析)
+                       → Session Manager(取/建会话)
+                       → Agent Core(ReAct Loop)
+                           ├─ LLM: "需要查CPU使用率"
+                           ├─ Tool Call: query_prometheus(cpu_usage)
+                           ├─ MCP: Prometheus 返回结果
+                           ├─ LLM: "CPU使用率85%，偏高"
+                           └─ 最终回复文本
+                       → Gateway(组装XML) → 企微推送给用户
+    </pre>
+  </div>
+</div>
+
+<p style="margin-top: 2rem; color: #666;">这个分层结构你觉得合理吗？</p>
