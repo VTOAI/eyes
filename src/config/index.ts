@@ -1,4 +1,6 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { AgentConfig } from "../agent/types.js";
 
 export interface MCPServerConfig {
@@ -13,7 +15,8 @@ export interface AppConfig {
   mcpServers: MCPServerConfig[];
 }
 
-const CONFIG_DIR = ".eyes";
+const HOME_CONFIG_DIR = join(homedir(), ".eyes");
+const LOCAL_CONFIG_DIR = ".eyes";
 
 function findFile(...paths: string[]): string | null {
   for (const p of paths) {
@@ -22,8 +25,16 @@ function findFile(...paths: string[]): string | null {
   return null;
 }
 
+function configPath(filename: string): string[] {
+  return [
+    join(HOME_CONFIG_DIR, filename),
+    join(LOCAL_CONFIG_DIR, filename),
+    filename, // bare filename for .env fallback
+  ];
+}
+
 function loadDotenv(): void {
-  const envFile = findFile(`${CONFIG_DIR}/.env`, ".env");
+  const envFile = findFile(...configPath(".env"));
   if (!envFile) return;
 
   try {
@@ -44,28 +55,45 @@ function loadDotenv(): void {
   }
 }
 
-function loadEnv(key: string, fallback?: string): string {
-  const val = process.env[key] ?? fallback;
-  if (!val) throw new Error(`Missing required env var: ${key}`);
-  return val;
-}
-
 const VALID_LLM_TYPES = ["openai", "anthropic"] as const;
 
-function loadMCPServers(): MCPServerConfig[] {
-  const mcpPath = process.env.MCP_CONFIG_PATH ?? findFile(`${CONFIG_DIR}/mcp.json`, ".mcp.json");
-  if (!mcpPath || !existsSync(mcpPath)) return [];
+interface RawConfigJson {
+  llm?: {
+    type?: string;
+    apiKey?: string;
+    baseURL?: string;
+    model?: string;
+  };
+  maxIterations?: number;
+  mcpServers?: Record<string, {
+    command?: string;
+    args?: string[];
+    url?: string;
+  }>;
+}
 
+function loadConfigJson(): RawConfigJson | null {
+  const path = findFile(...configPath("config.json"));
+  if (!path) return null;
   try {
-    const raw = readFileSync(mcpPath, "utf-8");
+    const raw = readFileSync(path, "utf-8");
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error(`Warning: failed to parse ${path}:`, e);
+    return null;
+  }
+}
+
+function parseMCPServersFromFile(path: string): MCPServerConfig[] {
+  if (!existsSync(path)) return [];
+  try {
+    const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw);
     const servers = parsed.mcpServers ?? {};
-
     if (typeof servers !== "object" || Array.isArray(servers)) {
       console.error("Warning: mcpServers config should be an object, got array");
       return [];
     }
-
     return Object.entries(servers).map(([name, cfg]: [string, any]) => ({
       name,
       command: cfg.command,
@@ -73,30 +101,76 @@ function loadMCPServers(): MCPServerConfig[] {
       url: cfg.url,
     }));
   } catch (e) {
-    console.error(`Warning: failed to parse ${mcpPath}:`, e);
+    console.error(`Warning: failed to parse ${path}:`, e);
     return [];
   }
+}
+
+function resolveMCPServers(rawCfg?: RawConfigJson | null): MCPServerConfig[] {
+  // 1. Explicit env var path wins
+  const envPath = process.env.MCP_CONFIG_PATH;
+  if (envPath) {
+    const servers = parseMCPServersFromFile(envPath);
+    if (servers.length > 0) return servers;
+  }
+
+  // 2. mcpServers from config.json
+  if (rawCfg?.mcpServers) {
+    return Object.entries(rawCfg.mcpServers).map(([name, cfg]) => ({
+      name,
+      command: cfg.command,
+      args: cfg.args,
+      url: cfg.url,
+    }));
+  }
+
+  return [];
+}
+
+export function addMCPServerToConfig(cfg: MCPServerConfig): void {
+  const raw = loadConfigJson() ?? {};
+  raw.mcpServers = raw.mcpServers ?? {};
+  raw.mcpServers[cfg.name] = {
+    command: cfg.command,
+    args: cfg.args,
+    url: cfg.url,
+  };
+  const dir = join(homedir(), ".eyes");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "config.json"), JSON.stringify(raw, null, 2));
 }
 
 export function loadConfig(): AppConfig {
   loadDotenv();
 
-  const rawType = process.env.LLM_TYPE ?? "openai";
+  // Load .eyes/config.json as optional base config
+  const rawCfg = loadConfigJson();
+
+  const rawType = process.env.LLM_TYPE ?? rawCfg?.llm?.type ?? "openai";
   const llmType = VALID_LLM_TYPES.includes(rawType as any)
     ? (rawType as "openai" | "anthropic")
     : "openai";
 
   const rawIterations = process.env.MAX_ITERATIONS;
-  const maxIterations = rawIterations !== undefined ? Number(rawIterations) : 10;
+  const maxIterations = rawIterations !== undefined
+    ? Number(rawIterations)
+    : (rawCfg?.maxIterations ?? 10);
+
+  const apiKey = process.env.LLM_API_KEY ?? rawCfg?.llm?.apiKey;
+  if (!apiKey) {
+    throw new Error(
+      "Missing LLM API key. Set it in ~/.eyes/config.json (llm.apiKey) or LLM_API_KEY env var."
+    );
+  }
 
   return {
     agent: {
       llmType,
-      apiKey: loadEnv("LLM_API_KEY"),
-      baseURL: loadEnv("LLM_BASE_URL", "https://api.openai.com/v1"),
-      model: loadEnv("LLM_MODEL", "gpt-4o"),
+      apiKey,
+      baseURL: process.env.LLM_BASE_URL ?? rawCfg?.llm?.baseURL ?? "https://api.openai.com/v1",
+      model: process.env.LLM_MODEL ?? rawCfg?.llm?.model ?? "gpt-4o",
       maxIterations,
     },
-    mcpServers: loadMCPServers(),
+    mcpServers: resolveMCPServers(rawCfg),
   };
 }
