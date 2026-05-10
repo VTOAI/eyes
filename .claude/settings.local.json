@@ -14,7 +14,8 @@
       "Bash(git commit *)",
       "Bash(git config *)",
       "Bash(git rm *)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Bash(LLM_API_KEY=sk-test LLM_MODEL=gpt-4o npx tsx src/index.ts)"
     ]
   }
 }
