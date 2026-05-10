@@ -25,7 +25,7 @@ function toOpenAIMessages(msgs: Message[]): OpenAI.Chat.ChatCompletionMessagePar
         role: "assistant",
         content: null,
         tool_calls: [
-          { id: m.toolCallId, type: "function", function: { name: m.toolName, arguments: "" } },
+          { id: m.toolCallId, type: "function", function: { name: m.toolName, arguments: JSON.stringify(m.args) } },
         ],
       } as OpenAI.Chat.ChatCompletionMessageParam;
     }
@@ -62,6 +62,9 @@ export class OpenAICompatibleClient implements LLMClient {
     });
 
     const choice = response.choices[0];
+    if (!choice) {
+      throw new Error("OpenAI API returned empty choices array");
+    }
 
     if (choice.finish_reason === "tool_calls" && choice.message.tool_calls) {
       const tc = choice.message.tool_calls[0];
