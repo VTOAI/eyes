@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { Message, Tool, LLMResponse, ToolCall } from "../agent/types.js";
-import { LLMClient } from "./client.js";
+import { Message, Tool, LLMResponse, Usage } from "../agent/types.js";
+import { LLMClient, StreamCallbacks } from "./client.js";
 
 type AnthropicToolUseBlock = Anthropic.Messages.ToolUseBlock;
 type AnthropicTextBlock = Anthropic.Messages.TextBlock;
@@ -56,36 +56,106 @@ export class AnthropicClient implements LLMClient {
     this.model = model;
   }
 
-  async chat(messages: Message[], tools: Tool[]): Promise<LLMResponse> {
-    const response = await this.client.messages.create({
+  async chat(messages: Message[], tools: Tool[], callbacks?: StreamCallbacks, signal?: AbortSignal): Promise<LLMResponse> {
+    const params: Anthropic.Messages.MessageCreateParams = {
       model: this.model,
       max_tokens: 4096,
       messages: toAnthropicMessages(messages),
       tools: tools.length > 0 ? toAnthropicTools(tools) : undefined,
-    });
+    };
 
-    if (!response.content || response.content.length === 0) {
-      throw new Error("Anthropic API returned empty content array");
+    // Non-streaming path
+    if (!callbacks && !signal) {
+      const response = await this.client.messages.create({ ...params, stream: false });
+      const result = parseAnthropicResponse(response.content);
+      if (response.usage) {
+        result.usage = { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens };
+      }
+      return result;
     }
 
-    // Find the first tool_use block — if present, return it as a tool_call
-    for (const block of response.content) {
-      if (block.type === "tool_use") {
-        const toolUse = block as AnthropicToolUseBlock;
-        const toolCall: ToolCall = {
-          id: toolUse.id,
-          name: toolUse.name,
-          args: toolUse.input as Record<string, unknown>,
-        };
-        return { type: "tool_call", toolCall };
+    // Streaming path
+    const stream = await this.client.messages.create(
+      { ...params, stream: true },
+      { signal }
+    );
+
+    let textContent = "";
+    let toolBlock: { id: string; name: string; inputJson: string } | null = null;
+    let usage: Usage | undefined;
+
+    for await (const event of stream) {
+      switch (event.type) {
+        case "message_start": {
+          const msg = (event as any).message;
+          if (msg?.usage) {
+            usage = { inputTokens: msg.usage.input_tokens, outputTokens: 0 };
+          }
+          break;
+        }
+        case "message_delta": {
+          const delta = (event as any).delta || event;
+          if (delta.usage) {
+            usage = usage
+              ? { ...usage, outputTokens: delta.usage.output_tokens }
+              : { inputTokens: 0, outputTokens: delta.usage.output_tokens ?? 0 };
+          }
+          break;
+        }
+        case "content_block_delta": {
+          const delta = event.delta;
+          if (delta.type === "text_delta") {
+            textContent += delta.text;
+            callbacks?.onToken?.(delta.text);
+          } else if (delta.type === "input_json_delta" && toolBlock) {
+            toolBlock.inputJson += delta.partial_json;
+          }
+          break;
+        }
+        case "content_block_start": {
+          const block = event.content_block;
+          if (block.type === "tool_use") {
+            toolBlock = { id: block.id, name: block.name, inputJson: "" };
+          }
+          break;
+        }
       }
     }
 
-    // No tool_use found — concatenate all text blocks
-    const textParts = response.content
-      .filter((b): b is AnthropicTextBlock => b.type === "text")
-      .map((b) => b.text);
+    if (toolBlock && toolBlock.name) {
+      try {
+        return {
+          type: "tool_call",
+          toolCall: { id: toolBlock.id, name: toolBlock.name, args: JSON.parse(toolBlock.inputJson || "{}") },
+          usage,
+        };
+      } catch {
+        // Fall through to text
+      }
+    }
 
-    return { type: "text", content: textParts.join("\n") || "" };
+    return { type: "text", content: textContent, usage };
   }
+}
+
+function parseAnthropicResponse(content: Anthropic.Messages.ContentBlock[]): LLMResponse {
+  if (!content || content.length === 0) {
+    throw new Error("Anthropic API returned empty content array");
+  }
+
+  for (const block of content) {
+    if (block.type === "tool_use") {
+      const toolUse = block as AnthropicToolUseBlock;
+      return {
+        type: "tool_call",
+        toolCall: { id: toolUse.id, name: toolUse.name, args: toolUse.input as Record<string, unknown> },
+      };
+    }
+  }
+
+  const textParts = content
+    .filter((b): b is AnthropicTextBlock => b.type === "text")
+    .map((b) => b.text);
+
+  return { type: "text", content: textParts.join("\n") || "" };
 }

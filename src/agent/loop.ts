@@ -1,4 +1,4 @@
-import { Message, LLMResponse, Tool } from "./types.js";
+import { Message, LLMResponse, Tool, Usage } from "./types.js";
 import { LLMClient } from "../llm/client.js";
 import { MCPRegistry } from "../mcp/registry.js";
 
@@ -11,6 +11,7 @@ export interface SessionLike {
 export interface AgentHooks {
   onStep?: (step: { type: "thinking" | "tool_call" | "tool_result"; content?: string; name?: string; args?: Record<string, unknown> }) => void;
   onToken?: (token: string) => void;
+  onUsage?: (usage: Usage, durationMs: number) => void;
 }
 
 export class Agent {
@@ -57,7 +58,13 @@ export class Agent {
         ...this.session.getAll(),
       ];
 
+      const t0 = Date.now();
       const response = await this.llm.chat(messages, tools, streamCallbacks, signal);
+      const elapsed = Date.now() - t0;
+
+      if (response.usage) {
+        hooks?.onUsage?.(response.usage, elapsed);
+      }
 
       if (response.type === "text") {
         if (!response.content.trim()) continue;

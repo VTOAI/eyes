@@ -87,6 +87,11 @@ function createAgentHooks(): AgentHooks {
       }
       process.stdout.write(token);
     },
+    onUsage: (usage, durationMs) => {
+      const sec = (durationMs / 1000).toFixed(1);
+      const total = usage.inputTokens + usage.outputTokens;
+      process.stdout.write(`  ${DIM}↑${usage.inputTokens} ↓${usage.outputTokens} (${total}) · ${sec}s${RESET}\n`);
+    },
   };
 }
 

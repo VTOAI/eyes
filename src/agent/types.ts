@@ -15,9 +15,14 @@ export interface ToolCall {
   args: Record<string, unknown>;
 }
 
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export type LLMResponse =
-  | { type: "text"; content: string }
-  | { type: "tool_call"; toolCall: ToolCall };
+  | { type: "text"; content: string; usage?: Usage }
+  | { type: "tool_call"; toolCall: ToolCall; usage?: Usage };
 
 export interface SessionMetadata {
   id: string;
