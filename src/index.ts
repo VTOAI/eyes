@@ -155,7 +155,37 @@ function separator(): void {
   process.stdout.write(`${DIM}${"─".repeat(width)}${RESET}\n`);
 }
 
+function printHelp(): void {
+  console.log(`${BOLD}eyes${RESET} — AI agent CLI with MCP tools`);
+  console.log();
+  console.log(`${BOLD}Usage:${RESET}`);
+  console.log(`  eyes              Start a new session`);
+  console.log(`  eyes --resume <id> Resume a previous session`);
+  console.log(`  eyes --help        Show this help`);
+  console.log();
+  console.log(`${BOLD}In-session commands:${RESET}`);
+  console.log(`  /help             Show available commands`);
+  console.log(`  /config           Show LLM configuration`);
+  console.log(`  /mcp              List MCP servers and tools`);
+  console.log(`  /doctor           Check configuration and connectivity`);
+  console.log(`  /install <desc>   Install an MCP server by description`);
+  console.log(`  /sessions list    List saved sessions`);
+  console.log(`  /sessions new <name>  Create and switch to a new session`);
+  console.log(`  /sessions switch <id>  Switch to a session`);
+  console.log(`  /sessions rename <id> <name>  Rename a session`);
+  console.log(`  /sessions delete <id>  Delete a session`);
+  console.log(`  /clear            Clear current session history`);
+  console.log(`  /exit             Exit`);
+  console.log();
+  console.log(`${DIM}Config: ~/.eyes/config.json${RESET}`);
+}
+
 async function main() {
+  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+    printHelp();
+    process.exit(0);
+  }
+
   console.log(BANNER);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const config = await setupAndLoadConfig(rl);
