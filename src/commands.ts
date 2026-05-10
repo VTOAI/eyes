@@ -21,18 +21,29 @@ function maskKey(key: string): string {
 
 function cmdSessions(ctx: CommandContext, args: string[]): string {
   const mgr = ctx.sessionManager;
-  if (!mgr) return "Session manager unavailable.";
 
   const sub = args[0] ?? "list";
 
-  switch (sub) {
-    case "list": {
-      const sessions = mgr.listSessions();
+  // "list" works without an active session (reads from disk)
+  if (sub === "list") {
+    const sessions = mgr
+      ? mgr.listSessions()
+      : SessionManager.listFromDisk();
+    if (sessions.length === 0) return "No sessions.";
+    if (mgr) {
       const active = mgr.getActive();
       return sessions
         .map((s) => `${s.id === active.id ? "*" : " "} ${s.id} — "${s.name}" (${new Date(s.lastAccessedAt).toLocaleString()})`)
-        .join("\n") || "No sessions.";
+        .join("\n");
     }
+    return sessions
+      .map((s) => `  ${s.id} — "${s.name}" (${new Date(s.lastAccessedAt).toLocaleString()})`)
+      .join("\n");
+  }
+
+  if (!mgr) return "Session management (new/switch/delete/rename) is only available inside an interactive eyes session.";
+
+  switch (sub) {
     case "new": {
       const name = args.slice(1).join(" ") || `session-${Date.now()}`;
       try {

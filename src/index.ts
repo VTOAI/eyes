@@ -193,15 +193,12 @@ async function runCliCommand(subcmd: string, args: string[]): Promise<void> {
   const llm = createLLMClient(config);
   const mcp = new MCPRegistry();
   const installer = new MCPServerInstaller(mcp, llm);
-  // Only create session manager for commands that need it
-  const needsSession = subcmd === "sessions" || subcmd === "install";
-  const sessionManager = needsSession ? SessionManager.loadOrCreate() : undefined;
 
   const slashCmd = CLI_COMMANDS[subcmd];
   const input = args.length > 0 ? `${slashCmd} ${args.join(" ")}` : slashCmd;
 
   try {
-    const result = await executeCommand(input, { config, mcp, llm, installer, sessionManager });
+    const result = await executeCommand(input, { config, mcp, llm, installer });
     console.log(result);
   } catch (e: any) {
     console.error(`${RED}${e.message}${RESET}`);

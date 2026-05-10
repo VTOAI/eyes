@@ -12,6 +12,26 @@ export class SessionManager {
 
   private constructor() {}
 
+  static listFromDisk(): SessionMetadata[] {
+    if (!existsSync(SESSIONS_DIR)) return [];
+    const files = readdirSync(SESSIONS_DIR).filter((f) => f.endsWith(".json"));
+    const sessions: SessionMetadata[] = [];
+    for (const f of files) {
+      try {
+        const data = JSON.parse(readFileSync(join(SESSIONS_DIR, f), "utf-8"));
+        sessions.push({
+          id: f.replace(/\.json$/, ""),
+          name: data.name ?? f.replace(/\.json$/, ""),
+          createdAt: data.createdAt ?? 0,
+          lastAccessedAt: data.lastAccessedAt ?? 0,
+        });
+      } catch {
+        // Skip corrupt files
+      }
+    }
+    return sessions.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
+  }
+
   static loadOrCreate(resumeId?: string): SessionManager {
     const mgr = new SessionManager();
 
