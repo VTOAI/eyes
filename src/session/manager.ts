@@ -12,54 +12,51 @@ export class SessionManager {
 
   private constructor() {}
 
-  static loadOrCreate(): SessionManager {
+  static loadOrCreate(resumeId?: string): SessionManager {
     const mgr = new SessionManager();
 
     if (!existsSync(SESSIONS_DIR)) {
       mkdirSync(SESSIONS_DIR, { recursive: true });
     }
 
+    // Load existing sessions from disk
     const files = existsSync(SESSIONS_DIR)
       ? readdirSync(SESSIONS_DIR).filter((f) => f.endsWith(".json"))
       : [];
 
-    if (files.length === 0) {
-      mgr.createSession("default");
+    for (const f of files) {
+      const id = f.replace(/\.json$/, "");
+      try {
+        const raw = readFileSync(join(SESSIONS_DIR, f), "utf-8");
+        const data = JSON.parse(raw);
+        const store = new SessionStore();
+        store.load(data.messages ?? []);
+        mgr.sessions.set(id, {
+          metadata: {
+            id,
+            name: data.name ?? id,
+            createdAt: data.createdAt ?? Date.now(),
+            lastAccessedAt: data.lastAccessedAt ?? Date.now(),
+          },
+          store,
+        });
+      } catch {
+        // Skip corrupt session files
+      }
+    }
+
+    if (resumeId) {
+      if (!mgr.sessions.has(resumeId)) {
+        throw new Error(`Session "${resumeId}" not found. Use /sessions list to see available sessions.`);
+      }
+      mgr.activeId = resumeId;
+      const s = mgr.sessions.get(resumeId)!;
+      s.metadata.lastAccessedAt = Date.now();
     } else {
-      for (const f of files) {
-        const id = f.replace(/\.json$/, "");
-        try {
-          const raw = readFileSync(join(SESSIONS_DIR, f), "utf-8");
-          const data = JSON.parse(raw);
-          const store = new SessionStore();
-          store.load(data.messages ?? []);
-          mgr.sessions.set(id, {
-            metadata: {
-              id,
-              name: data.name ?? id,
-              createdAt: data.createdAt ?? Date.now(),
-              lastAccessedAt: data.lastAccessedAt ?? Date.now(),
-            },
-            store,
-          });
-        } catch {
-          // Skip corrupt session files
-        }
-      }
-
-      if (mgr.sessions.size === 0) {
-        mgr.createSession("default");
-      }
+      // Create new session for this window
+      mgr.createSession(`session-${Date.now()}`);
     }
 
-    // Activate most recently accessed session
-    let mostRecent: { id: string; ts: number } | null = null;
-    for (const [, s] of mgr.sessions) {
-      if (!mostRecent || s.metadata.lastAccessedAt > mostRecent.ts) {
-        mostRecent = { id: s.metadata.id, ts: s.metadata.lastAccessedAt };
-      }
-    }
-    mgr.activeId = mostRecent!.id;
     return mgr;
   }
 
@@ -78,6 +75,7 @@ export class SessionManager {
       lastAccessedAt: Date.now(),
     };
     this.sessions.set(id, { metadata, store: new SessionStore() });
+    this.activeId = id;
     this.saveSession(id);
     return metadata;
   }

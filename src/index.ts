@@ -162,7 +162,22 @@ async function main() {
   const llm = createLLMClient(config);
   const mcp = new MCPRegistry();
   const installer = new MCPServerInstaller(mcp, llm);
-  const sessionManager = SessionManager.loadOrCreate();
+
+  const resumeArgIdx = process.argv.indexOf("--resume");
+  const resumeId = resumeArgIdx !== -1 ? process.argv[resumeArgIdx + 1] : undefined;
+  if (resumeArgIdx !== -1 && !resumeId) {
+    console.log(`${RED}Usage: eyes --resume <session-id>${RESET}`);
+    console.log(`${DIM}Run /sessions list inside eyes to see available sessions.${RESET}`);
+    process.exit(1);
+  }
+
+  let sessionManager: SessionManager;
+  try {
+    sessionManager = SessionManager.loadOrCreate(resumeId);
+  } catch (e: any) {
+    console.log(`${RED}${e.message}${RESET}`);
+    process.exit(1);
+  }
   const agent = new Agent(llm, mcp, sessionManager, config.agent.maxIterations, getKnownServerDescriptions());
 
   function getPrompt(): string {
