@@ -28,7 +28,7 @@ export class MCPRegistry {
   private async connectServer(cfg: MCPServerConfig): Promise<void> {
     const transport = createTransport(cfg);
     const client = new Client(
-      { name: "agent-cli", version: "0.1.0" },
+      { name: "eyes", version: "0.1.0" },
       { capabilities: {} }
     );
 

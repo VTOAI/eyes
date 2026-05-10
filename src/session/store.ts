@@ -24,6 +24,10 @@ export class SessionStore {
     this.messages = [];
   }
 
+  load(messages: Message[]): void {
+    this.messages = [...messages];
+  }
+
   private prune(): void {
     let totalChars = this.messages.reduce((sum, m) => sum + m.content.length, 0);
 

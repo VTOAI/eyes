@@ -19,6 +19,13 @@ export type LLMResponse =
   | { type: "text"; content: string }
   | { type: "tool_call"; toolCall: ToolCall };
 
+export interface SessionMetadata {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastAccessedAt: number;
+}
+
 export interface AgentConfig {
   llmType: "openai" | "anthropic";
   apiKey: string;

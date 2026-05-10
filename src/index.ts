@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
 import { loadConfig } from "./config/index.js";
 import { OpenAICompatibleClient } from "./llm/openai.js";

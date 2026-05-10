@@ -15,7 +15,10 @@
       "Bash(git config *)",
       "Bash(git rm *)",
       "Bash(npx vitest *)",
-      "Bash(LLM_API_KEY=sk-test LLM_MODEL=gpt-4o npx tsx src/index.ts)"
+      "Bash(LLM_API_KEY=sk-test LLM_MODEL=gpt-4o npx tsx src/index.ts)",
+      "Bash(LLM_API_KEY=sk-test LLM_MODEL=gpt-4o node dist/index.js)",
+      "Bash(npm link *)",
+      "Bash(LLM_API_KEY=sk-test LLM_MODEL=gpt-4o eyes)"
     ]
   }
 }
