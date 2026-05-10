@@ -211,7 +211,7 @@ export async function executeCommand(input: string, ctx: CommandContext): Promis
         return [
           "Usage: /install <description of MCP server>",
           "",
-          "Known servers: github, filesystem, postgres, sqlite, puppeteer, brave-search, memory, slack",
+          "Known servers: filesystem, github, postgres, puppeteer, brave-search, memory, slack, sequential-thinking",
           "",
           "Examples:",
           "  /install install the github mcp",
