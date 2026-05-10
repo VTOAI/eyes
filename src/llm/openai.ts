@@ -1,32 +1,36 @@
 import OpenAI from "openai";
-import { Message, LLMResponse, ToolCall } from "../agent/types.js";
+import { Message, Tool, LLMResponse, ToolCall } from "../agent/types.js";
 import { LLMClient } from "./client.js";
+
+function isToolResult(m: Message): m is Extract<Message, { role: "tool_result" }> {
+  return m.role === "tool_result";
+}
+
+function isAssistantToolCall(m: Message): m is Extract<Message, { role: "assistant"; toolCallId: string }> {
+  return m.role === "assistant" && "toolCallId" in m;
+}
 
 function toOpenAIMessages(msgs: Message[]): OpenAI.Chat.ChatCompletionMessageParam[] {
   return msgs.map((m) => {
-    switch (m.role) {
-      case "user":
-        return { role: "user", content: m.content };
-      case "assistant":
-        if (m.toolCallId) {
-          return {
-            role: "assistant",
-            content: null,
-            tool_calls: [
-              { id: m.toolCallId, type: "function", function: { name: m.toolName!, arguments: "" } },
-            ],
-          } as OpenAI.Chat.ChatCompletionMessageParam;
-        }
-        return { role: "assistant", content: m.content };
-      case "tool_result":
-        return {
-          role: "tool",
-          tool_call_id: m.toolCallId!,
-          content: m.content,
-        } as OpenAI.Chat.ChatCompletionMessageParam;
-      default:
-        return { role: "user", content: m.content };
+    if (isToolResult(m)) {
+      return {
+        role: "tool",
+        tool_call_id: m.toolCallId,
+        content: m.content,
+      } as OpenAI.Chat.ChatCompletionMessageParam;
     }
+
+    if (isAssistantToolCall(m)) {
+      return {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: m.toolCallId, type: "function", function: { name: m.toolName, arguments: "" } },
+        ],
+      } as OpenAI.Chat.ChatCompletionMessageParam;
+    }
+
+    return { role: m.role as "user" | "assistant", content: m.content };
   });
 }
 
