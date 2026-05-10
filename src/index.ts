@@ -40,6 +40,12 @@ function createLLMClient(config: ReturnType<typeof loadConfig>): LLMClient {
   return new OpenAICompatibleClient(agent.apiKey, agent.baseURL, agent.model);
 }
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 function createAgentHooks(): AgentHooks {
   let thinking = false;
   let thinkingTimer: ReturnType<typeof setInterval> | null = null;
@@ -89,8 +95,7 @@ function createAgentHooks(): AgentHooks {
     },
     onUsage: (usage, durationMs) => {
       const sec = (durationMs / 1000).toFixed(1);
-      const total = usage.inputTokens + usage.outputTokens;
-      process.stdout.write(`  ${DIM}↑${usage.inputTokens} ↓${usage.outputTokens} (${total}) · ${sec}s${RESET}\n`);
+      process.stdout.write(`  ${DIM}⎿ ${sec}s · ↑ ${formatTokens(usage.inputTokens)} · ↓ ${formatTokens(usage.outputTokens)}${RESET}\n`);
     },
   };
 }
