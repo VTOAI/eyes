@@ -86,7 +86,7 @@ export class FeishuBotGateway implements MessageGateway {
       };
 
       await this.onMessage(gatewayMsg, async (text: string) => {
-        await this.channel.send(event.chatId, { text });
+        await this.channel.send(event.chatId, { markdown: text });
       });
     });
   }
