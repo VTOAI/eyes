@@ -181,8 +181,7 @@ async function main() {
   const agent = new Agent(llm, mcp, sessionManager, config.agent.maxIterations, getKnownServerDescriptions());
 
   function getPrompt(): string {
-    const s = sessionManager.getActive();
-    return `${DIM}${s.name}${RESET} ${BOLD}>${RESET} `;
+    return `${BOLD}>${RESET} `;
   }
 
   mcp.registerLocalTool(
