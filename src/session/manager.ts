@@ -8,7 +8,7 @@ const SESSIONS_DIR = join(homedir(), ".eyes", "sessions");
 
 export class SessionManager {
   private sessions: Map<string, { metadata: SessionMetadata; store: SessionStore }> = new Map();
-  private activeId: string;
+  private activeId!: string;
 
   private constructor() {}
 
