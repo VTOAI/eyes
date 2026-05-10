@@ -2,7 +2,6 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Message, Tool, LLMResponse, ToolCall } from "../agent/types.js";
 import { LLMClient } from "./client.js";
 
-type AnthropicMessageParam = Anthropic.Messages.MessageParam;
 type AnthropicToolUseBlock = Anthropic.Messages.ToolUseBlock;
 type AnthropicTextBlock = Anthropic.Messages.TextBlock;
 
@@ -14,16 +13,18 @@ function isAssistantToolCall(m: Message): m is Extract<Message, { role: "assista
   return m.role === "assistant" && "toolCallId" in m;
 }
 
-function toAnthropicMessages(msgs: Message[]): AnthropicMessageParam[] {
-  const result: AnthropicMessageParam[] = [];
+function toAnthropicMessages(msgs: Message[]): Anthropic.Messages.MessageParam[] {
+  const result: Anthropic.Messages.MessageParam[] = [];
 
   for (const m of msgs) {
     if (m.role === "user" || m.role === "assistant") {
       if (isAssistantToolCall(m)) {
-        result.push({
-          role: "assistant",
-          content: [{ type: "tool_use", id: m.toolCallId, name: m.toolName, input: m.args }],
-        });
+        const content: Anthropic.Messages.ContentBlockParam[] = [];
+        if (m.content) {
+          content.push({ type: "text", text: m.content });
+        }
+        content.push({ type: "tool_use", id: m.toolCallId, name: m.toolName, input: m.args });
+        result.push({ role: "assistant", content });
       } else {
         result.push({ role: m.role, content: m.content });
       }
@@ -63,19 +64,28 @@ export class AnthropicClient implements LLMClient {
       tools: tools.length > 0 ? toAnthropicTools(tools) : undefined,
     });
 
-    const block = response.content[0];
-
-    if (block?.type === "tool_use") {
-      const toolUse = block as AnthropicToolUseBlock;
-      const toolCall: ToolCall = {
-        id: toolUse.id,
-        name: toolUse.name,
-        args: toolUse.input as Record<string, unknown>,
-      };
-      return { type: "tool_call", toolCall };
+    if (!response.content || response.content.length === 0) {
+      throw new Error("Anthropic API returned empty content array");
     }
 
-    const textBlock = block as AnthropicTextBlock | undefined;
-    return { type: "text", content: textBlock?.text || "" };
+    // Find the first tool_use block — if present, return it as a tool_call
+    for (const block of response.content) {
+      if (block.type === "tool_use") {
+        const toolUse = block as AnthropicToolUseBlock;
+        const toolCall: ToolCall = {
+          id: toolUse.id,
+          name: toolUse.name,
+          args: toolUse.input as Record<string, unknown>,
+        };
+        return { type: "tool_call", toolCall };
+      }
+    }
+
+    // No tool_use found — concatenate all text blocks
+    const textParts = response.content
+      .filter((b): b is AnthropicTextBlock => b.type === "text")
+      .map((b) => b.text);
+
+    return { type: "text", content: textParts.join("\n") || "" };
   }
 }
