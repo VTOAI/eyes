@@ -95,7 +95,11 @@ function createAgentHooks(): AgentHooks {
     },
     onUsage: (usage, durationMs) => {
       const sec = (durationMs / 1000).toFixed(1);
-      process.stdout.write(`  ${DIM}⎿ ${sec}s · ↑ ${formatTokens(usage.inputTokens)} · ↓ ${formatTokens(usage.outputTokens)}${RESET}\n`);
+      if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
+        process.stdout.write(`  ${DIM}⎿ ${sec}s · ↑ ${formatTokens(usage.inputTokens)} · ↓ ${formatTokens(usage.outputTokens)}${RESET}\n`);
+      } else {
+        process.stdout.write(`  ${DIM}⎿ ${sec}s${RESET}\n`);
+      }
     },
   };
 }

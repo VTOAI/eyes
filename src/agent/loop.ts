@@ -11,7 +11,7 @@ export interface SessionLike {
 export interface AgentHooks {
   onStep?: (step: { type: "thinking" | "tool_call" | "tool_result"; content?: string; name?: string; args?: Record<string, unknown> }) => void;
   onToken?: (token: string) => void;
-  onUsage?: (usage: Usage, durationMs: number) => void;
+  onUsage?: (usage: Usage | undefined, durationMs: number) => void;
 }
 
 export class Agent {
@@ -62,9 +62,7 @@ export class Agent {
       const response = await this.llm.chat(messages, tools, streamCallbacks, signal);
       const elapsed = Date.now() - t0;
 
-      if (response.usage) {
-        hooks?.onUsage?.(response.usage, elapsed);
-      }
+      hooks?.onUsage?.(response.usage, elapsed);
 
       if (response.type === "text") {
         if (!response.content.trim()) continue;
