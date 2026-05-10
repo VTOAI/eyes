@@ -26,19 +26,25 @@ export class Agent {
   }
 
   async run(userInput: string): Promise<string> {
-    this.session.add({ role: "user", content: userInput, timestamp: Date.now() });
+    if (!userInput.trim()) {
+      return "Please provide a non-empty message.";
+    }
 
-    const messages: Message[] = [
-      { role: "user", content: SYSTEM_PROMPT, timestamp: Date.now() },
-      ...this.session.getAll(),
-    ];
+    this.session.add({ role: "user", content: userInput, timestamp: Date.now() });
 
     const tools = await this.mcp.listAllTools();
 
     for (let i = 0; i < this.maxIterations; i++) {
+      // Build messages from session each iteration so pruning applies
+      const messages: Message[] = [
+        { role: "user", content: SYSTEM_PROMPT, timestamp: Date.now() },
+        ...this.session.getAll(),
+      ];
+
       const response = await this.llm.chat(messages, tools);
 
       if (response.type === "text") {
+        if (!response.content.trim()) continue; // skip empty response, retry
         this.session.add({ role: "assistant", content: response.content, timestamp: Date.now() });
         return response.content;
       }
@@ -47,23 +53,21 @@ export class Agent {
       const tc = response.toolCall;
       const result = await this.mcp.callTool(tc.name, tc.args);
 
-      messages.push(
-        {
-          role: "assistant",
-          content: "",
-          toolCallId: tc.id,
-          toolName: tc.name,
-          args: tc.args,
-          timestamp: Date.now(),
-        },
-        {
-          role: "tool_result",
-          content: result,
-          toolCallId: tc.id,
-          toolName: tc.name,
-          timestamp: Date.now(),
-        }
-      );
+      this.session.add({
+        role: "assistant",
+        content: "",
+        toolCallId: tc.id,
+        toolName: tc.name,
+        args: tc.args,
+        timestamp: Date.now(),
+      });
+      this.session.add({
+        role: "tool_result",
+        content: result,
+        toolCallId: tc.id,
+        toolName: tc.name,
+        timestamp: Date.now(),
+      });
     }
 
     const timeoutMsg = "I've reached the maximum number of tool call iterations. Please try simplifying your request.";
