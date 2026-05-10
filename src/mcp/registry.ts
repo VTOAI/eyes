@@ -32,21 +32,29 @@ export class MCPRegistry {
       { capabilities: {} }
     );
 
-    await client.connect(transport);
+    try {
+      await client.connect(transport);
 
-    const { tools } = await client.listTools();
-    const conn: ServerConnection = { client, name: cfg.name };
+      const { tools } = await client.listTools();
+      const conn: ServerConnection = { client, name: cfg.name };
 
-    for (const tool of tools) {
-      this.toolMap.set(tool.name, conn);
-      this.cachedTools.push({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-      });
+      for (const tool of tools) {
+        if (this.toolMap.has(tool.name)) {
+          console.error(`Warning: duplicate tool name "${tool.name}" from server "${cfg.name}" — previous definition will be shadowed`);
+        }
+        this.toolMap.set(tool.name, conn);
+        this.cachedTools.push({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        });
+      }
+
+      this.connections.push(conn);
+    } catch (e) {
+      await client.close().catch(() => {});
+      throw e;
     }
-
-    this.connections.push(conn);
   }
 
   listAllTools(): Tool[] {

@@ -11,7 +11,7 @@ vi.mock("../../src/mcp/transport.js", () => ({
 
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
   const mockConnect = vi.fn();
-  const mockClose = vi.fn();
+  const mockClose = vi.fn(() => Promise.resolve());
   const mockListTools = vi.fn();
   const mockCallTool = vi.fn();
 
