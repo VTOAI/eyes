@@ -155,44 +155,33 @@ function separator(): void {
   process.stdout.write(`${DIM}${"─".repeat(width)}${RESET}\n`);
 }
 
-const CLI_FLAGS: Record<string, string> = {
-  "--config": "/config",
-  "--mcp": "/mcp",
-  "--doctor": "/doctor",
-  "--sessions": "/sessions",
-  "--install": "/install",
-  "--help": "/help",
+const CLI_COMMANDS: Record<string, string> = {
+  config: "/config",
+  mcp: "/mcp",
+  doctor: "/doctor",
+  sessions: "/sessions",
+  install: "/install",
+  help: "/help",
 };
 
 function printHelp(): void {
   console.log(`${BOLD}eyes${RESET} — AI agent CLI with MCP tools`);
   console.log();
   console.log(`${BOLD}Usage:${RESET}`);
-  console.log(`  eyes                 Start a new session`);
-  console.log(`  eyes --resume <id>    Resume a previous session`);
-  console.log(`  eyes --help           Show this help`);
-  console.log(`  eyes --config         Show LLM configuration`);
-  console.log(`  eyes --mcp            List MCP servers and tools`);
-  console.log(`  eyes --doctor         Check configuration and connectivity`);
-  console.log(`  eyes --install <desc> Install an MCP server`);
-  console.log(`  eyes --sessions list  List saved sessions`);
+  console.log(`  eyes                Start a new session`);
+  console.log(`  eyes resume <id>    Resume a previous session`);
+  console.log(`  eyes help           Show this help`);
+  console.log(`  eyes config         Show LLM configuration`);
+  console.log(`  eyes mcp            List MCP servers and tools`);
+  console.log(`  eyes doctor         Check configuration and connectivity`);
+  console.log(`  eyes install <desc> Install an MCP server`);
+  console.log(`  eyes sessions list  List saved sessions`);
   console.log();
-  console.log(`${DIM}All flags also work as in-session /commands.${RESET}`);
+  console.log(`${DIM}All subcommands also work as in-session /commands.${RESET}`);
   console.log(`${DIM}Config: ~/.eyes/config.json${RESET}`);
 }
 
-function findCliFlag(): { flag: string; args: string[] } | null {
-  for (const flag of Object.keys(CLI_FLAGS)) {
-    const idx = process.argv.indexOf(flag);
-    if (idx !== -1) {
-      return { flag, args: process.argv.slice(idx + 1) };
-    }
-  }
-  return null;
-}
-
-async function runCliCommand(flag: string, args: string[]): Promise<void> {
-  // Load config non-interactively — fail if not configured
+async function runCliCommand(subcmd: string, args: string[]): Promise<void> {
   let config: AppConfig;
   try {
     config = loadConfig();
@@ -204,9 +193,11 @@ async function runCliCommand(flag: string, args: string[]): Promise<void> {
   const llm = createLLMClient(config);
   const mcp = new MCPRegistry();
   const installer = new MCPServerInstaller(mcp, llm);
-  const sessionManager = SessionManager.loadOrCreate();
+  // Only create session manager for commands that need it
+  const needsSession = subcmd === "sessions" || subcmd === "install";
+  const sessionManager = needsSession ? SessionManager.loadOrCreate() : undefined;
 
-  const slashCmd = CLI_FLAGS[flag];
+  const slashCmd = CLI_COMMANDS[subcmd];
   const input = args.length > 0 ? `${slashCmd} ${args.join(" ")}` : slashCmd;
 
   try {
@@ -220,18 +211,34 @@ async function runCliCommand(flag: string, args: string[]): Promise<void> {
   }
 }
 
+function parseResumeId(): string | undefined {
+  // Support both "eyes resume <id>" and "eyes --resume <id>"
+  if (process.argv[2] === "resume") return process.argv[3];
+  const idx = process.argv.indexOf("--resume");
+  return idx !== -1 ? process.argv[idx + 1] : undefined;
+}
+
 async function main() {
-  // Handle --help / -h
-  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  const subcmd = process.argv[2];
+
+  // Handle help (also keep -h/--help for muscle memory)
+  if (subcmd === "help" || subcmd === "-h" || subcmd === "--help") {
     printHelp();
     process.exit(0);
   }
 
-  // Handle non-interactive CLI flags (--config, --mcp, --doctor, --install, --sessions)
-  const cliFlag = findCliFlag();
-  if (cliFlag) {
-    await runCliCommand(cliFlag.flag, cliFlag.args);
+  // Handle non-interactive subcommands (both "config" and "--config")
+  const normalized = subcmd?.replace(/^--?/, "");
+  if (normalized && normalized in CLI_COMMANDS) {
+    await runCliCommand(normalized, process.argv.slice(3));
     process.exit(0);
+  }
+
+  const resumeId = parseResumeId();
+  if (resumeId !== undefined && !resumeId) {
+    console.log(`${RED}Usage: eyes resume <session-id>${RESET}`);
+    console.log(`${DIM}Run 'eyes sessions list' to see available sessions.${RESET}`);
+    process.exit(1);
   }
 
   console.log(BANNER);
@@ -240,14 +247,6 @@ async function main() {
   const llm = createLLMClient(config);
   const mcp = new MCPRegistry();
   const installer = new MCPServerInstaller(mcp, llm);
-
-  const resumeArgIdx = process.argv.indexOf("--resume");
-  const resumeId = resumeArgIdx !== -1 ? process.argv[resumeArgIdx + 1] : undefined;
-  if (resumeArgIdx !== -1 && !resumeId) {
-    console.log(`${RED}Usage: eyes --resume <session-id>${RESET}`);
-    console.log(`${DIM}Run /sessions list inside eyes to see available sessions.${RESET}`);
-    process.exit(1);
-  }
 
   let sessionManager: SessionManager;
   try {
