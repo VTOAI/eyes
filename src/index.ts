@@ -457,7 +457,20 @@ async function main() {
   }
 
   console.log(BANNER);
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    completer: (line: string): [string[], string] => {
+      const lower = line.toLowerCase();
+      if (!lower.startsWith("/")) return [[], line];
+      const hits = COMMANDS.filter((c) => c.startsWith(lower));
+      if (hits.length <= 1) return [hits, line];
+      // Multiple matches: complete to longest common prefix, then show list
+      const common = findCommonPrefix(hits);
+      if (common.length > lower.length) return [[common], line];
+      return [hits, line];
+    },
+  });
   const config = await setupAndLoadConfig(rl);
   const llm = createLLMClient(config);
   const mcp = new MCPRegistry();
@@ -535,8 +548,6 @@ async function main() {
   let selectedIdx = 0;
   let arrowUsed = false;
   let pendingCommand: string | null = null;
-  let lastTabAt = 0;
-  let tabCycleIdx = 0;
 
   function findCommonPrefix(strings: string[]): string {
     if (strings.length === 0) return "";
@@ -563,7 +574,6 @@ async function main() {
     sugLines = 0;
     selectedIdx = 0;
     arrowUsed = false;
-    tabCycleIdx = 0;
   }
 
   function updateSuggestions(line: string): void {
@@ -622,57 +632,6 @@ async function main() {
     }
     if (key.name === "left" || key.name === "right") {
       clearSuggestions();
-      return;
-    }
-
-    if (key.name === "tab") {
-      const line = (rl as any).line || "";
-      const lower = line.toLowerCase();
-      if (!lower.startsWith("/")) return;
-
-      const hits = COMMANDS.filter((c) => c.startsWith(lower));
-      if (hits.length === 0) return;
-
-      if (hits.length === 1) {
-        // Single match: auto-complete with trailing space
-        const completed = hits[0];
-        try { (rl as any).line = completed + " "; } catch {}
-        pendingCommand = completed + " ";
-        clearSuggestions();
-        process.stdout.write(`\x1b[2K\r${BOLD}>${RESET} ${completed} `);
-        return;
-      }
-
-      // Multiple matches: complete to longest common prefix
-      const common = findCommonPrefix(hits);
-      if (common.length > lower.length) {
-        try { (rl as any).line = common; } catch {}
-        clearSuggestions();
-        process.stdout.write(`\x1b[2K\r${BOLD}>${RESET} ${common}`);
-        // Show updated suggestions for the new prefix
-        process.nextTick(() => {
-          if (rlClosed) return;
-          const newLine = (rl as any).line || common;
-          updateSuggestions(newLine);
-        });
-        lastTabAt = 0;
-        return;
-      }
-
-      // Already at common prefix: show/cycle suggestions
-      const now = Date.now();
-      if (now - lastTabAt < 500) {
-        tabCycleIdx = (tabCycleIdx + 1) % hits.length;
-        selectedIdx = tabCycleIdx;
-      } else {
-        tabCycleIdx = 0;
-        selectedIdx = 0;
-      }
-      arrowUsed = true;
-      clearSugVisual();
-      sugLines = 0;
-      updateSuggestions(line);
-      lastTabAt = now;
       return;
     }
 
