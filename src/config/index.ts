@@ -30,7 +30,9 @@ export interface AppConfig {
   channels: ChannelConfig[];
 }
 
-const HOME_CONFIG_DIR = join(homedir(), ".eyes");
+function homeConfigDir(): string {
+  return process.env.EYES_CONFIG_DIR || join(homedir(), ".eyes");
+}
 const LOCAL_CONFIG_DIR = ".eyes";
 
 function findFile(...paths: string[]): string | null {
@@ -42,7 +44,7 @@ function findFile(...paths: string[]): string | null {
 
 function configPath(filename: string): string[] {
   return [
-    join(HOME_CONFIG_DIR, filename),
+    join(homeConfigDir(), filename),
     join(LOCAL_CONFIG_DIR, filename),
     filename, // bare filename for .env fallback
   ];
@@ -158,7 +160,7 @@ export function addMCPServerToConfig(cfg: MCPServerConfig): void {
     url: cfg.url,
     env: cfg.env,
   };
-  const dir = join(homedir(), ".eyes");
+  const dir = homeConfigDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "config.json"), JSON.stringify(raw, null, 2));
 }

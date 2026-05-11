@@ -1,25 +1,28 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
+import { loadConfig, addMCPServerToConfig } from "../../src/config/index.js";
 
-// These tests exercise the config loading path by writing temp config files
-// and verifying loadConfig() reads them correctly.
+const SAVED_EYES_CONFIG_DIR = process.env.EYES_CONFIG_DIR;
+
+function createTempConfigDir(): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "eyes-test-")));
+  process.env.EYES_CONFIG_DIR = dir;
+  return dir;
+}
+
+function cleanupTempDir(dir: string): void {
+  process.env.EYES_CONFIG_DIR = SAVED_EYES_CONFIG_DIR;
+  try { rmSync(dir, { recursive: true }); } catch { /* ok */ }
+}
+
 describe("loadConfig", () => {
-  const configDir = join(homedir(), ".eyes");
-  const configFile = join(configDir, "config.json");
-  let savedConfig: string | null = null;
+  let tmpDir: string;
 
   beforeEach(() => {
-    // Save existing config
-    if (existsSync(configFile)) {
-      savedConfig = readFileSync(configFile, "utf-8");
-    }
-    // Clean state
-    if (existsSync(configFile)) {
-      rmSync(configFile);
-    }
-    // Clear env vars that affect config
+    tmpDir = createTempConfigDir();
     delete process.env.LLM_API_KEY;
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
@@ -29,14 +32,7 @@ describe("loadConfig", () => {
   });
 
   afterEach(() => {
-    if (existsSync(configFile)) {
-      rmSync(configFile);
-    }
-    // Restore saved config
-    if (savedConfig !== null) {
-      if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
-      writeFileSync(configFile, savedConfig);
-    }
+    cleanupTempDir(tmpDir);
     delete process.env.LLM_API_KEY;
     delete process.env.LLM_MODEL;
     delete process.env.LLM_BASE_URL;
@@ -46,13 +42,11 @@ describe("loadConfig", () => {
   });
 
   it("should throw when no API key is configured", () => {
-    // No config file, no env var — should throw
-    const { loadConfig } = requireConfig();
     expect(() => loadConfig()).toThrow(/Missing LLM API key/);
   });
 
   it("should load LLM config from config.json", () => {
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    const configFile = join(tmpDir, "config.json");
     writeFileSync(configFile, JSON.stringify({
       llm: {
         type: "openai",
@@ -63,7 +57,6 @@ describe("loadConfig", () => {
       maxIterations: 5,
     }));
 
-    const { loadConfig } = requireConfig();
     const config = loadConfig();
     expect(config.agent.llmType).toBe("openai");
     expect(config.agent.apiKey).toBe("sk-test-key");
@@ -73,7 +66,7 @@ describe("loadConfig", () => {
   });
 
   it("should override config with env vars", () => {
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    const configFile = join(tmpDir, "config.json");
     writeFileSync(configFile, JSON.stringify({
       llm: {
         type: "openai",
@@ -90,7 +83,6 @@ describe("loadConfig", () => {
     process.env.LLM_TYPE = "anthropic";
     process.env.MAX_ITERATIONS = "8";
 
-    const { loadConfig } = requireConfig();
     const config = loadConfig();
     expect(config.agent.apiKey).toBe("sk-env-key");
     expect(config.agent.model).toBe("gpt-4o");
@@ -100,7 +92,7 @@ describe("loadConfig", () => {
   });
 
   it("should parse MCP servers from config.json", () => {
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    const configFile = join(tmpDir, "config.json");
     writeFileSync(configFile, JSON.stringify({
       llm: { type: "openai", apiKey: "sk-test", model: "gpt-4" },
       mcpServers: {
@@ -115,7 +107,6 @@ describe("loadConfig", () => {
       },
     }));
 
-    const { loadConfig } = requireConfig();
     const config = loadConfig();
     expect(config.mcpServers).toHaveLength(2);
     expect(config.mcpServers[0].name).toBe("test-server");
@@ -126,7 +117,7 @@ describe("loadConfig", () => {
   });
 
   it("should parse gateways and channels from config.json", () => {
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    const configFile = join(tmpDir, "config.json");
     writeFileSync(configFile, JSON.stringify({
       llm: { type: "openai", apiKey: "sk-test", model: "gpt-4" },
       gateways: [
@@ -137,7 +128,6 @@ describe("loadConfig", () => {
       ],
     }));
 
-    const { loadConfig } = requireConfig();
     const config = loadConfig();
     expect(config.gateways).toHaveLength(1);
     expect(config.gateways[0].type).toBe("feishu-bot");
@@ -148,51 +138,35 @@ describe("loadConfig", () => {
   });
 
   it("should handle corrupt config.json gracefully", () => {
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    const configFile = join(tmpDir, "config.json");
     writeFileSync(configFile, "{ invalid json }");
 
-    const { loadConfig } = requireConfig();
     expect(() => loadConfig()).toThrow(/Missing LLM API key/);
-    // Config file parse warning logged but doesn't crash
   });
 
   it("should handle empty config.json gracefully", () => {
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    const configFile = join(tmpDir, "config.json");
     writeFileSync(configFile, JSON.stringify({}));
 
-    const { loadConfig } = requireConfig();
     expect(() => loadConfig()).toThrow(/Missing LLM API key/);
   });
 });
 
-// Use dynamic import with cache busting to get a fresh module each test
-function requireConfig() {
-  // We use a module-level cache buster since vitest transforms modules
-  return requireConfigModule();
-}
-
-// Re-import the module directly — vitest handles module isolation per test file
-import { loadConfig, addMCPServerToConfig, MCPServerConfig } from "../../src/config/index.js";
-
-// Re-export for use in tests that need fresh state
-function requireConfigModule() {
-  return { loadConfig, addMCPServerToConfig };
-}
-
 describe("addMCPServerToConfig", () => {
-  const configDir = join(homedir(), ".eyes");
-  const configFile = join(configDir, "config.json");
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = createTempConfigDir();
+    delete process.env.LLM_API_KEY;
+  });
 
   afterEach(() => {
-    if (existsSync(configFile)) {
-      rmSync(configFile);
-    }
+    cleanupTempDir(tmpDir);
     delete process.env.LLM_API_KEY;
   });
 
   it("should add a new MCP server to config.json", () => {
-    // Pre-create config with API key
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    const configFile = join(tmpDir, "config.json");
     writeFileSync(configFile, JSON.stringify({
       llm: { type: "openai", apiKey: "sk-test", model: "gpt-4" },
     }));
@@ -204,8 +178,8 @@ describe("addMCPServerToConfig", () => {
       args: ["-y", "some-package"],
     });
 
-    const raw = JSON.parse(readFileSync(configFile, "utf-8"));
-    expect(raw.mcpServers).toBeDefined();
-    expect(raw.mcpServers["new-server"].command).toBe("npx");
+    const data = JSON.parse(readFileSync(configFile, "utf-8"));
+    expect(data.mcpServers).toBeDefined();
+    expect(data.mcpServers["new-server"].command).toBe("npx");
   });
 });
