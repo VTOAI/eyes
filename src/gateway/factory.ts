@@ -21,6 +21,21 @@ export async function createGateway(
         llm, mcp, sessions, maxIterations, knownServerDescriptions,
       );
     }
+    case "wecom-bot": {
+      const { WecomBotGateway } = await import("./wecom-bot.js");
+      return new WecomBotGateway(
+        cfg.name,
+        {
+          corpid: String(cfg.corpid),
+          corpsecret: String(cfg.corpsecret),
+          agentId: String(cfg.agentId),
+          token: String(cfg.token),
+          encodingAesKey: String(cfg.encodingAesKey),
+          port: typeof cfg.port === "number" ? cfg.port : undefined,
+        },
+        llm, mcp, sessions, maxIterations, knownServerDescriptions,
+      );
+    }
     default:
       throw new Error(`Unknown gateway type: ${cfg.type}`);
   }

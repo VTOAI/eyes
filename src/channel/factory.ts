@@ -7,6 +7,10 @@ export async function createChannel(cfg: ChannelConfig): Promise<NotificationCha
       const { FeishuWebhookChannel } = await import("./feishu-webhook.js");
       return new FeishuWebhookChannel(cfg.name, String(cfg.webhookUrl));
     }
+    case "wecom-webhook": {
+      const { WecomWebhookChannel } = await import("./wecom-webhook.js");
+      return new WecomWebhookChannel(cfg.name, String(cfg.webhookUrl));
+    }
     default:
       throw new Error(`Unknown channel type: ${cfg.type}`);
   }
