@@ -34,7 +34,7 @@ function toOpenAIMessages(msgs: Message[]): OpenAI.Chat.ChatCompletionMessagePar
       return msg as unknown as OpenAI.Chat.ChatCompletionMessageParam;
     }
 
-    const msg: Record<string, unknown> = { role: m.role as "user" | "assistant", content: m.content };
+    const msg: Record<string, unknown> = { role: m.role as "system" | "user" | "assistant", content: m.content };
     if ("reasoningContent" in m && m.reasoningContent) {
       (msg as any).reasoning_content = m.reasoningContent;
     }

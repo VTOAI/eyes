@@ -17,6 +17,7 @@ function toAnthropicMessages(msgs: Message[]): Anthropic.Messages.MessageParam[]
   const result: Anthropic.Messages.MessageParam[] = [];
 
   for (const m of msgs) {
+    if (m.role === "system") continue;
     if (m.role === "user" || m.role === "assistant") {
       if (isAssistantToolCall(m)) {
         const content: Anthropic.Messages.ContentBlockParam[] = [];
@@ -57,11 +58,17 @@ export class AnthropicClient implements LLMClient {
   }
 
   async chat(messages: Message[], tools: Tool[], callbacks?: StreamCallbacks, signal?: AbortSignal): Promise<LLMResponse> {
+    const systemMessages = messages.filter((m) => m.role === "system");
+    const system = systemMessages.length > 0
+      ? systemMessages.map((m) => ({ type: "text" as const, text: m.content }))
+      : undefined;
+
     const params: Anthropic.Messages.MessageCreateParams = {
       model: this.model,
       max_tokens: 4096,
       messages: toAnthropicMessages(messages),
       tools: tools.length > 0 ? toAnthropicTools(tools) : undefined,
+      ...(system ? { system } : {}),
     };
 
     // Non-streaming path

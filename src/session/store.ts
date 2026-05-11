@@ -32,8 +32,22 @@ export class SessionStore {
     let totalChars = this.messages.reduce((sum, m) => sum + m.content.length, 0);
 
     while (totalChars > this.maxChars && this.messages.length > 4) {
-      const removed = this.messages.shift()!;
-      totalChars -= removed.content.length;
+      const first = this.messages[0];
+
+      if (first.role === "assistant" && "toolCallId" in first) {
+        // Remove tool_call + paired tool_result together to keep pairing valid
+        const removed1 = this.messages.shift()!;
+        totalChars -= removed1.content.length;
+        const tcId = (removed1 as { toolCallId: string }).toolCallId;
+        if (this.messages[0]?.role === "tool_result" && "toolCallId" in this.messages[0]
+            && (this.messages[0] as { toolCallId: string }).toolCallId === tcId) {
+          const removed2 = this.messages.shift()!;
+          totalChars -= removed2.content.length;
+        }
+      } else {
+        const removed = this.messages.shift()!;
+        totalChars -= removed.content.length;
+      }
     }
   }
 }

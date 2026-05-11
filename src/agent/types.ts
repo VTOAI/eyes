@@ -2,9 +2,10 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export type { Tool };
 
-export type Role = "user" | "assistant" | "tool_result";
+export type Role = "system" | "user" | "assistant" | "tool_result";
 
 export type Message =
+  | { role: "system"; content: string; timestamp: number }
   | { role: "user" | "assistant"; content: string; timestamp: number; reasoningContent?: string }
   | { role: "assistant"; content: string; toolCallId: string; toolName: string; args: Record<string, unknown>; timestamp: number; reasoningContent?: string }
   | { role: "tool_result"; content: string; toolCallId: string; toolName: string; timestamp: number };

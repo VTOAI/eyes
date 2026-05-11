@@ -708,6 +708,7 @@ async function main() {
 
       const ac = new AbortController();
       currentAbort = ac;
+      lastEscAt = 0; // Reset to prevent stale double-ESC from aborting new run
       const hooks = createAgentHooks(channelInstances);
 
       try {

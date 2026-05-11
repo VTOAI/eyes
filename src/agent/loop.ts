@@ -55,7 +55,7 @@ export class Agent {
       const tools = await this.mcp.listAllTools();
 
       const messages: Message[] = [
-        { role: "user", content: buildSystemPrompt(this.mcp, this.knownServerDescriptions), timestamp: Date.now() },
+        { role: "system", content: buildSystemPrompt(this.mcp, this.knownServerDescriptions), timestamp: Date.now() },
         ...this.session.getAll(),
       ];
 

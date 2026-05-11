@@ -97,7 +97,8 @@ function loadConfigJson(): RawConfigJson | null {
     const raw = readFileSync(path, "utf-8");
     return JSON.parse(raw);
   } catch (e) {
-    console.error(`Warning: failed to parse ${path}:`, e);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Warning: failed to parse ${path}: ${msg}`);
     return null;
   }
 }
@@ -120,7 +121,8 @@ function parseMCPServersFromFile(path: string): MCPServerConfig[] {
       env: cfg.env,
     }));
   } catch (e) {
-    console.error(`Warning: failed to parse ${path}:`, e);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Warning: failed to parse ${path}: ${msg}`);
     return [];
   }
 }

@@ -62,6 +62,7 @@ export class FeishuBotGateway implements MessageGateway {
 
     try {
       const response = await agent.run(msg.text);
+      this.sessions.saveChat(msg.platform, msg.chatId);
       await reply(truncate(response, FEISHU_MSG_LIMIT));
     } catch (e: any) {
       await reply(`Error: ${e.message}`);
