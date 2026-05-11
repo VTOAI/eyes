@@ -20,6 +20,7 @@
     "@modelcontextprotocol/sdk": "^1.13.0",
     "@wecom/aibot-node-sdk": "^1.0.6",
     "openai": "^4.93.0",
+    "tiktoken": "^1.0.22",
     "ws": "^8.20.0"
   },
   "devDependencies": {

@@ -1,6 +1,7 @@
 import { Message, LLMResponse, Tool, Usage } from "./types.js";
 import { LLMClient } from "../llm/client.js";
 import { MCPRegistry } from "../mcp/registry.js";
+import { countTokens } from "../context/tokenizer.js";
 
 export interface SessionLike {
   add(msg: Message): void;
@@ -22,6 +23,7 @@ export class Agent {
   private maxIterations: number;
   private knownServerDescriptions: string;
   private contextWindow: number;
+  lastContextTokens = 0;
 
   constructor(
     llm: LLMClient,
@@ -61,17 +63,32 @@ export class Agent {
       const tools = await this.mcp.listAllTools();
       const systemPrompt = buildSystemPrompt(this.mcp, this.knownServerDescriptions);
 
+      let sessionMessages = this.session.getAll();
+      const systemTokens = countTokens(systemPrompt);
+      let sessionTokens = sessionMessages.reduce((sum, m) => sum + countTokens(m.content), 0);
+      const toolOverhead = tools.length * 200; // rough per-tool token estimate
+      const totalTokens = systemTokens + sessionTokens + toolOverhead;
+
+      // Pre-flight trim: if near context window, drop oldest messages
+      const limit = this.contextWindow * 0.85;
+      if (totalTokens > limit) {
+        const trimmed = trimMessages(sessionMessages, systemTokens + toolOverhead, limit);
+        sessionMessages = trimmed;
+        sessionTokens = trimmed.reduce((sum, m) => sum + countTokens(m.content), 0);
+      }
+
       const messages: Message[] = [
         { role: "system", content: systemPrompt, timestamp: Date.now() },
-        ...this.session.getAll(),
+        ...sessionMessages,
       ];
+
+      const usedTokens = systemTokens + sessionTokens + toolOverhead;
+      this.lastContextTokens = usedTokens;
 
       const t0 = Date.now();
       const response = await this.llm.chat(messages, tools, streamCallbacks, signal);
       const elapsed = Date.now() - t0;
 
-      const sessionTokens = (this.session as any).getEstimatedTokens?.() ?? 0;
-      const usedTokens = Math.ceil(systemPrompt.length / 4) + sessionTokens;
       hooks?.onUsage?.(response.usage, elapsed, { usedTokens, maxTokens: this.contextWindow });
 
       if (response.type === "text") {
@@ -134,6 +151,31 @@ export class Agent {
     hooks?.onComplete?.(timeoutMsg);
     return timeoutMsg;
   }
+}
+
+function trimMessages(messages: Message[], fixedTokens: number, limit: number): Message[] {
+  let total = fixedTokens + messages.reduce((sum, m) => sum + countTokens(m.content), 0);
+  const result = [...messages];
+
+  while (total > limit && result.length > 4) {
+    const first = result[0];
+
+    if (first.role === "assistant" && "toolCallId" in first) {
+      const removed1 = result.shift()!;
+      total -= countTokens(removed1.content);
+      const tcId = (removed1 as { toolCallId: string }).toolCallId;
+      if (result[0]?.role === "tool_result" && "toolCallId" in result[0]
+          && (result[0] as { toolCallId: string }).toolCallId === tcId) {
+        const removed2 = result.shift()!;
+        total -= countTokens(removed2.content);
+      }
+    } else {
+      const removed = result.shift()!;
+      total -= countTokens(removed.content);
+    }
+  }
+
+  return result;
 }
 
 function buildSystemPrompt(mcp: MCPRegistry, knownDescriptions: string): string {

@@ -2,7 +2,7 @@
 
 ## 概述
 
-基于 TypeScript 的命令行 AI Agent，支持通用 MCP 工具扩展，兼容 OpenAI / Anthropic API，支持飞书 Bot 网关和通知推送。
+基于 TypeScript 的命令行 AI Agent，支持通用 MCP 工具扩展，兼容 OpenAI / Anthropic API，支持飞书/企业微信 Bot 网关和通知推送，具备上下文窗口管理和精确 token 计数。
 
 ### Why CLI First
 
@@ -19,38 +19,59 @@
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │                    ReAct Loop                               │  │
 │  │    User Input → LLM → Tool Call → LLM → Output             │  │
+│  │    ├─ 上下文窗口管理（tiktoken 精确计数 + 前置裁剪）         │  │
+│  │    ├─ 工具循环检测（同工具+同参数连续3次自动停止）           │  │
+│  │    └─ 流式输出 + 实时 token/耗时展示                        │  │
 │  └──────────────────┬─────────────────────────────────────────┘  │
 │         ↕                       ↕                                │
 │  ┌─────────────┐     ┌──────────────────────────┐               │
 │  │  LLM Client  │     │     MCP Registry          │               │
 │  │  (OpenAI /   │     │  ┌────────────────────┐  │               │
 │  │   Anthropic) │     │  │ MCP Tools (stdio/  │  │               │
-│  └─────────────┘     │  │ SSE)               │  │               │
-│                       │  ├─ 启动时连接         │  │               │
-│  ┌──────────────────┐ │  ├─ 获取 tools list   │  │               │
-│  │  会话管理器       │ │  ├─ unified call()   │  │               │
-│  │  (磁盘持久化)     │ │  ├─ 错误隔离          │  │               │
-│  └──────────────────┘ │  └────────────────────┘  │               │
-│                       │  ┌────────────────────┐  │               │
-│  ┌──────────────────┐ │  │ Local Tools        │  │               │
-│  │  配置加载         │ │  │ (程序注册的本地工具) │  │               │
-│  │  ~/.eyes/        │ │  └────────────────────┘  │               │
-│  │  config.json     │ └──────────────────────────┘               │
+│  │  ├─ max_tokens│     │  │ SSE)               │  │               │
+│  └─────────────┘     │  ├─ 启动时连接         │  │               │
+│                       │  ├─ 获取 tools list   │  │               │
+│  ┌──────────────────┐ │  ├─ unified call()   │  │               │
+│  │  上下文管理       │ │  ├─ 错误隔离          │  │               │
+│  │  ├─ tiktoken     │ │  └────────────────────┘  │               │
+│  │  │  cl100k_base  │ │  ┌────────────────────┐  │               │
+│  │  ├─ 前置裁剪      │ │  │ Local Tools        │  │               │
+│  │  │  (85% 阈值)   │ │  │ (程序注册的本地工具) │  │               │
+│  │  └─ 配对保护      │ │  └────────────────────┘  │               │
+│  └──────────────────┘ └──────────────────────────┘               │
+│                                                                  │
+│  ┌──────────────────┐                                           │
+│  │  会话管理器       │                                           │
+│  │  ├─ 磁盘持久化    │                                           │
+│  │  ├─ SessionStore  │                                           │
+│  │  │  自动裁剪      │                                           │
+│  │  └─ 多会话 CRUD   │                                           │
+│  └──────────────────┘                                           │
+│                                                                  │
+│  ┌──────────────────┐                                           │
+│  │  配置加载         │                                           │
+│  │  ~/.eyes/        │                                           │
+│  │  config.json     │                                           │
+│  │  ├─ contextWindow│                                           │
+│  │  └─ maxOutputTok │                                           │
 │  └──────────────────┘                                           │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │               Gateway / Channel Layer                       │  │
-│  │  ┌──────────────────┐  ┌──────────────────────────────┐   │  │
-│  │  │ Message Gateway   │  │ Notification Channel          │   │  │
-│  │  │ (飞书 Bot 等)     │  │ (飞书 Webhook 等)             │   │  │
-│  │  │ - 接收外部消息     │  │ - LLM 完成后主动推送          │   │  │
-│  │  │ - 路由到 Agent    │  │ - send_notification 工具      │   │  │
-│  │  └──────────────────┘  └──────────────────────────────┘   │  │
+│  │  ┌──────────────────────────┐  ┌──────────────────────┐   │  │
+│  │  │ Message Gateway           │  │ Notification Channel  │   │  │
+│  │  │ ├─ FeishuBotGateway       │  │ ├─ FeishuWebhook      │   │  │
+│  │  │ ├─ WecomBotGateway        │  │ └─ WecomWebhook       │   │  │
+│  │  │ ├─ WecomAiBotGateway (WS) │  │                        │   │  │
+│  │  │ └─ 流式回复 + Markdown    │  │                        │   │  │
+│  │  └──────────────────────────┘  └──────────────────────┘   │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │           PerChatSessionRouter                              │  │
 │  │    platform + chatId → 独立 Agent Session                   │  │
+│  │    ├─ 上下文窗口限制传递                                      │  │
+│  │    └─ SessionStore 自动裁剪                                  │  │
 │  └────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -66,6 +87,13 @@ loop:
   response = llm.chat(messages + tools)
 
   if response has tool_call:
+    // 工具循环检测：同工具+同参数连续3次自动停止
+    if tool_call.name + args === last_tool_call:
+      loop_count++
+      if loop_count >= 3: break  // 防止死循环
+    else:
+      loop_count = 1
+
     result = mcpRegistry.call(tool_call.name, tool_call.args)
     messages.append(tool_call, result)
     continue
@@ -76,7 +104,12 @@ loop:
 ```
 
 - 最大循环轮次：可配置（默认 10 轮），防死循环
-- 上下文窗口：messages 累积，由 LLM 自身管理上下文窗口
+- 工具循环检测：对比 `toolName + JSON.stringify(args)`，同工具同参数连续 3 次自动停止
+- **上下文窗口管理**：
+  - 使用 `tiktoken` (cl100k_base 编码) 精确计数，覆盖 DeepSeek/OpenAI 模型
+  - 每次 LLM 调用前进行前置裁剪（85% 阈值），防止超窗口报错
+  - 裁剪时保护 tool-call/tool-result 配对，至少保留最后 4 条消息
+  - 工具定义额外估算 200 tokens/个
 - 支持 AbortController 中断（双击 ESC）
 - Agent 接受任意 `SessionLike` 接口（`{add, getAll, clear}`），CLI 和 Gateway 复用同一 Agent
 
@@ -105,10 +138,10 @@ type LLMResponse =
 
 | 实现 | 覆盖模型 | 备注 |
 |------|---------|------|
-| `OpenAICompatibleClient` | DeepSeek / GPT / 通义千问 / 智谱 / Moonshot 等 | 国产模型及 OpenAI，支持 reasoning_content |
-| `AnthropicClient` | Claude Sonnet / Opus | 兼容 Anthropic Messages API |
+| `OpenAICompatibleClient` | DeepSeek / GPT / 通义千问 / 智谱 / Moonshot 等 | 国产模型及 OpenAI，支持 reasoning_content，支持 `max_tokens` 限制 |
+| `AnthropicClient` | Claude Sonnet / Opus | 兼容 Anthropic Messages API，支持 `max_tokens` 限制 |
 
-通过配置选择 LLM 后端，切换模型无需改代码。reasoningContent 字段透传推理过程（如 DeepSeek R1）。
+通过配置选择 LLM 后端，切换模型无需改代码。reasoningContent 字段透传推理过程（如 DeepSeek R1）。`maxOutputTokens` 通过 AgentConfig 传递给 LLM Client，控制每次 API 调用的最大输出长度。
 
 ### 3. MCP Registry
 
@@ -127,10 +160,14 @@ type LLMResponse =
 ### 4. 会话管理器
 
 - 磁盘持久化存储（`~/.eyes/sessions/`），每个会话一个 JSON 文件
-- 支持 CRUD：list / new / switch / delete / rename
+- `SessionManager` — 多会话 CRUD（list/new/switch/delete/rename）
+- `SessionStore` — 单会话消息存储，内置裁剪机制：
+  - 添加消息时若超出上下文窗口限制自动裁剪老旧消息
+  - 保护 tool-call/tool-result 配对不被拆散
+  - 支持配置化的 `maxTokens` 上限
 - `eyes resume <id>` 恢复历史会话
 - `eyes sessions list` 在非交互模式下也可用（直接从磁盘读取）
-- 每条消息包含 `{role, content, timestamp, reasoningContent?}`
+- 每条消息包含 `{role, content, timestamp, reasoningContent?, toolCallId?, toolName?, args?}`
 
 ### 5. 配置加载
 
@@ -142,7 +179,9 @@ type LLMResponse =
     "type": "openai | anthropic",
     "apiKey": "...",
     "baseURL": "https://api.openai.com/v1",
-    "model": "gpt-4o"
+    "model": "gpt-4o",
+    "contextWindow": 128000,
+    "maxOutputTokens": 4096
   },
   "maxIterations": 10,
   "mcpServers": {
@@ -170,7 +209,9 @@ type LLMResponse =
 | API Key | `LLM_API_KEY` | — |
 | API Base URL | `LLM_BASE_URL` | — |
 | 模型名称 | `LLM_MODEL` | — |
-| 最大迭代 | `MAX_ITERATIONS` | — |
+| 上下文窗口 | `CONTEXT_WINDOW` | 默认 128000 |
+| 最大输出长度 | `MAX_OUTPUT_TOKENS` | 默认 4096 |
+| 最大迭代 | `MAX_ITERATIONS` | 默认 10 |
 | MCP 配置文件 | `MCP_CONFIG_PATH` | 单独指定 MCP Server 配置 JSON |
 | `.env` 文件 | — | 从 `~/.eyes/.env`、`.eyes/.env`、`.env` 自动加载 |
 
@@ -189,7 +230,15 @@ interface MessageGateway {
 }
 ```
 
-**已实现**：`FeishuBotGateway` — 通过飞书 WebSocket 长连接接收消息，每条消息独立 Agent Session，回复支持 Markdown 格式。
+**已实现**：
+
+| Gateway | 传输 | 说明 |
+|---------|------|------|
+| `FeishuBotGateway` | WebSocket | 飞书 Bot 长连接，Markdown 回复 |
+| `WecomBotGateway` | HTTP Callback | 企业微信机器人回调，Markdown 回复，WXBizMsgCrypt 加解密 |
+| `WecomAiBotGateway` | WebSocket | 企业微信 AI Bot 长连接，流式回复（全量覆盖模式），支持单聊和群聊 |
+
+所有 Gateway 通过 `PerChatSessionRouter` 管理会话，确保同平台同会话的消息共享上下文。上下文窗口限制通过 Agent 构造函数传递。
 
 ### 7. Channel — 通知通道
 
@@ -202,7 +251,7 @@ interface NotificationChannel {
 }
 ```
 
-**已实现**：`FeishuWebhookChannel` — 通过飞书 Webhook URL 发送通知。LLM 可通过 `send_notification` 本地工具指定 channel 名称推送消息。
+**已实现**：`FeishuWebhookChannel`、`WecomWebhookChannel` — 通过飞书/企业微信 Webhook URL 发送通知。LLM 可通过 `send_notification` 本地工具指定 channel 名称推送消息。
 
 ### 8. PerChatSessionRouter
 
@@ -212,7 +261,7 @@ Gateway 层的会话路由：
 platform + chatId → Agent Session
 ```
 
-同一飞书群聊的所有消息共享同一个 Agent Session，保持对话上下文。
+同一平台同会话的所有消息共享同一个 Agent Session，保持对话上下文。接收 `maxTokens` 参数并传递给内部 `SessionStore`，支持自动裁剪。
 
 ### 9. eyes serve — 后台网关服务
 
@@ -263,8 +312,10 @@ eyes serve status    # 查看运行状态
 |------|------|
 | MCP Server 连接失败 | 静默跳过，错误日志输出，不影响其他 Server |
 | LLM API 调用失败 | 退避重试 3 次，都失败则报错 |
+| 上下文窗口接近上限 | 前置裁剪（85% 阈值），移除最旧消息，保护 tool 配对 |
 | Tool 执行异常 | 错误信息作为 tool result 返回给 LLM |
 | 循环达到最大轮次 | 停止并返回超时提示 |
+| 工具循环检测触发 | 同工具+同参数连续 3 次自动停止，提示换个方式描述 |
 | Tool Call JSON 解析失败 | 跳过该调用，通知 LLM 重新生成 |
 | Gateway 启动失败 | 单个 Gateway 失败不影响其他 |
 | Channel 推送失败 | 静默忽略（.catch），不阻塞 Agent 响应 |
@@ -280,37 +331,54 @@ eyes/
 │   ├── index.ts                # CLI 入口（交互 + 子命令 + serve）
 │   ├── commands.ts             # Slash 命令实现
 │   ├── agent/
-│   │   ├── loop.ts             # ReAct 核心循环
-│   │   └── types.ts            # 类型定义
+│   │   ├── loop.ts             # ReAct 核心循环（含上下文管理 + 循环检测）
+│   │   └── types.ts            # 类型定义（Message, Tool, AgentConfig 等）
+│   ├── context/
+│   │   └── tokenizer.ts        # tiktoken 封装（cl100k_base，精确 token 计数）
 │   ├── llm/
 │   │   ├── client.ts           # LLMClient 接口
-│   │   ├── openai.ts           # OpenAI-compatible 实现
+│   │   ├── openai.ts           # OpenAI-compatible 实现（含 reasoning_content）
 │   │   └── anthropic.ts        # Anthropic 实现
 │   ├── mcp/
 │   │   ├── registry.ts         # MCP 注册中心（含 local tool）
 │   │   ├── transport.ts        # stdio / SSE 传输层
 │   │   └── installer.ts        # MCP Server 安装器
 │   ├── session/
-│   │   └── manager.ts          # 会话管理器（磁盘持久化）
+│   │   ├── manager.ts          # 会话管理器（多会话 CRUD + 磁盘持久化）
+│   │   └── store.ts            # SessionStore（单会话消息存储 + 自动裁剪）
 │   ├── config/
-│   │   └── index.ts            # 配置加载
+│   │   └── index.ts            # 配置加载（含 contextWindow, maxOutputTokens）
 │   ├── gateway/
 │   │   ├── types.ts            # MessageGateway 接口
-│   │   ├── factory.ts          # Gateway 工厂
-│   │   ├── feishu-bot.ts       # 飞书 Bot 网关
-│   │   └── session-router.ts   # PerChatSessionRouter
+│   │   ├── factory.ts          # Gateway 工厂（含 contextWindow 传递）
+│   │   ├── feishu-bot.ts       # 飞书 Bot 网关（WebSocket）
+│   │   ├── wecom-bot.ts        # 企业微信机器人网关（HTTP Callback + 加解密）
+│   │   ├── wecom-aibot.ts      # 企业微信 AI Bot 网关（WebSocket + 流式回复）
+│   │   └── session-router.ts   # PerChatSessionRouter（含 maxTokens）
 │   └── channel/
 │       ├── types.ts            # NotificationChannel 接口
 │       ├── factory.ts          # Channel 工厂
-│       └── feishu-webhook.ts   # 飞书 Webhook 通道
+│       ├── feishu-webhook.ts   # 飞书 Webhook 通道
+│       └── wecom-webhook.ts    # 企业微信 Webhook 通道
 ├── tests/
 │   ├── unit/
 │   │   ├── agent-hooks.test.ts
+│   │   ├── agent-abort.test.ts
+│   │   ├── config-loading.test.ts
 │   │   ├── feishu-session-router.test.ts
-│   │   └── feishu-webhook.test.ts
+│   │   ├── feishu-webhook.test.ts
+│   │   ├── llm-client.test.ts
+│   │   ├── mcp-registry.test.ts
+│   │   ├── session-manager.test.ts
+│   │   ├── session-prune-pairing.test.ts
+│   │   ├── session-store.test.ts
+│   │   ├── wecom-aibot.test.ts
+│   │   ├── wecom-gateway.test.ts
+│   │   └── wecom-webhook.test.ts
 │   └── integration/
 │       └── agent-loop.test.ts
 ├── CLAUDE.md                   # Claude Code 项目指南
+├── README.md
 ├── package.json
 └── tsconfig.json
 ```
@@ -321,15 +389,19 @@ eyes/
 
 | 层级 | 覆盖 | 工具 |
 |------|------|------|
-| 单元测试 | Agent hooks、Feishu Webhook、Session Router | Vitest |
+| 单元测试 | Agent hooks/abort、Session Store/Manager/Prune、LLM Client、MCP Registry、Config Loading、Feishu/Wecom Gateway/Webhook、Session Router | Vitest |
 | 集成测试 | Agent 循环流转（Mock LLM + MCP） | Vitest |
 | E2E（手动） | 真实连接 MCP Server 验证 | — |
+
+共 14 个测试文件，64 个测试用例，覆盖所有核心模块。
 
 ---
 
 ## 后续规划
 
-- 更多 Gateway 适配（企业微信、Slack、Discord）
+- ~~企业微信 Gateway~~ ✅ 已完成（Bot + AI Bot 双模式）
+- 更多 Gateway 适配（Slack、Discord、钉钉）
 - Redis 会话存储（支持多实例水平扩展）
 - Subagent 并行查询
 - K8s 部署（Gateway 无状态化）
+- 上下文智能总结（超出窗口时自动压缩而非简单裁剪）

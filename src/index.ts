@@ -131,7 +131,7 @@ function createAgentHooks(session: { getEstimatedTokens?(): number }, contextWin
       }
       if (contextInfo && contextInfo.maxTokens > 0) {
         const pct = ((contextInfo.usedTokens / contextInfo.maxTokens) * 100).toFixed(1);
-        parts.push(`~${formatTokens(contextInfo.usedTokens)}/${formatTokens(contextInfo.maxTokens)} (${pct}%)`);
+        parts.push(`${formatTokens(contextInfo.usedTokens)}/${formatTokens(contextInfo.maxTokens)} (${pct}%)`);
       }
       process.stdout.write(`  ${DIM}⎿ ${parts.join(" · ")}${RESET}\n`);
     },
@@ -493,10 +493,10 @@ async function main() {
   const agent = new Agent(llm, mcp, sessionManager, config.agent.maxIterations, getKnownServerDescriptions(), config.agent.contextWindow);
 
   function getPrompt(): string {
-    const used = sessionManager.getEstimatedTokens();
+    const used = agent.lastContextTokens || sessionManager.getEstimatedTokens();
     const max = sessionManager.getMaxTokens();
     const pct = max > 0 ? ((used / max) * 100).toFixed(0) : "0";
-    return `${DIM}~${formatTokens(used)}/${formatTokens(max)} (${pct}%)${RESET}\n${BOLD}>${RESET} `;
+    return `${DIM}${formatTokens(used)}/${formatTokens(max)} (${pct}%)${RESET}\n${BOLD}>${RESET} `;
   }
 
   mcp.registerLocalTool(
