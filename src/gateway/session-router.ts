@@ -13,6 +13,11 @@ const GATEWAY_SESSIONS_DIR = join(homedir(), ".eyes", "gateway-sessions");
  */
 export class PerChatSessionRouter {
   private stores = new Map<string, SessionStore>();
+  private maxTokens: number;
+
+  constructor(maxTokens = 128_000) {
+    this.maxTokens = maxTokens;
+  }
 
   private key(platform: string, chatId: string): string {
     return `${platform}:${chatId}`;
@@ -21,7 +26,7 @@ export class PerChatSessionRouter {
   getSession(platform: string, chatId: string): SessionLike {
     const k = this.key(platform, chatId);
     if (!this.stores.has(k)) {
-      const store = new SessionStore();
+      const store = new SessionStore(this.maxTokens);
       // Try to load persisted messages from disk
       const file = join(GATEWAY_SESSIONS_DIR, `${sanitize(k)}.json`);
       if (existsSync(file)) {

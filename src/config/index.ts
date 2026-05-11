@@ -80,6 +80,8 @@ interface RawConfigJson {
     apiKey?: string;
     baseURL?: string;
     model?: string;
+    contextWindow?: number;
+    maxOutputTokens?: number;
   };
   maxIterations?: number;
   mcpServers?: Record<string, {
@@ -181,6 +183,16 @@ export function loadConfig(): AppConfig {
     ? Number(rawIterations)
     : (rawCfg?.maxIterations ?? 10);
 
+  const rawContextWindow = process.env.CONTEXT_WINDOW ?? rawCfg?.llm?.contextWindow;
+  const contextWindow = rawContextWindow !== undefined
+    ? Number(rawContextWindow)
+    : 128_000;
+
+  const rawMaxOutput = process.env.MAX_OUTPUT_TOKENS ?? rawCfg?.llm?.maxOutputTokens;
+  const maxOutputTokens = rawMaxOutput !== undefined
+    ? Number(rawMaxOutput)
+    : 4096;
+
   const apiKey = process.env.LLM_API_KEY ?? rawCfg?.llm?.apiKey;
   if (!apiKey) {
     throw new Error(
@@ -207,6 +219,8 @@ export function loadConfig(): AppConfig {
       baseURL: process.env.LLM_BASE_URL ?? rawCfg?.llm?.baseURL ?? "https://api.openai.com/v1",
       model: process.env.LLM_MODEL ?? rawCfg?.llm?.model ?? "gpt-4o",
       maxIterations,
+      contextWindow,
+      maxOutputTokens,
     },
     mcpServers: resolveMCPServers(rawCfg),
     gateways,

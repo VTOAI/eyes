@@ -56,15 +56,18 @@ function toOpenAITools(tools: Tool[]): OpenAI.Chat.ChatCompletionTool[] {
 export class OpenAICompatibleClient implements LLMClient {
   private client: OpenAI;
   private model: string;
+  private maxOutputTokens: number;
 
-  constructor(apiKey: string, baseURL: string, model: string) {
+  constructor(apiKey: string, baseURL: string, model: string, maxOutputTokens = 4096) {
     this.client = new OpenAI({ apiKey, baseURL });
     this.model = model;
+    this.maxOutputTokens = maxOutputTokens;
   }
 
   async chat(messages: Message[], tools: Tool[], callbacks?: StreamCallbacks, signal?: AbortSignal): Promise<LLMResponse> {
     const params: OpenAI.ChatCompletionCreateParams = {
       model: this.model,
+      max_tokens: this.maxOutputTokens,
       messages: toOpenAIMessages(messages),
       tools: tools.length > 0 ? toOpenAITools(tools) : undefined,
     };

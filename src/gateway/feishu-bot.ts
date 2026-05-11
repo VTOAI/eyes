@@ -18,6 +18,7 @@ export class FeishuBotGateway implements MessageGateway {
   private sessions: PerChatSessionRouter;
   private maxIterations: number;
   private knownServerDescriptions: string;
+  private contextWindow: number;
 
   constructor(
     name: string,
@@ -26,6 +27,7 @@ export class FeishuBotGateway implements MessageGateway {
     mcp: MCPRegistry,
     sessions: PerChatSessionRouter,
     maxIterations: number,
+    contextWindow: number,
     knownServerDescriptions: string,
   ) {
     this.name = name;
@@ -38,6 +40,7 @@ export class FeishuBotGateway implements MessageGateway {
     this.mcp = mcp;
     this.sessions = sessions;
     this.maxIterations = maxIterations;
+    this.contextWindow = contextWindow;
     this.knownServerDescriptions = knownServerDescriptions;
   }
 
@@ -65,7 +68,7 @@ export class FeishuBotGateway implements MessageGateway {
       const chatId = event.chatId;
       const platform = this.name;
       const session = this.sessions.getSession(platform, chatId);
-      const agent = new Agent(this.llm, this.mcp, session, this.maxIterations, this.knownServerDescriptions);
+      const agent = new Agent(this.llm, this.mcp, session, this.maxIterations, this.knownServerDescriptions, this.contextWindow);
 
       await this.channel.stream(chatId, {
         markdown: async (ctrl) => {

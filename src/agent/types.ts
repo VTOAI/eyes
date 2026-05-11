@@ -38,4 +38,6 @@ export interface AgentConfig {
   baseURL: string;
   model: string;
   maxIterations: number;
+  contextWindow: number;
+  maxOutputTokens: number;
 }

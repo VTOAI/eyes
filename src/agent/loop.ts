@@ -11,7 +11,7 @@ export interface SessionLike {
 export interface AgentHooks {
   onStep?: (step: { type: "thinking" | "tool_call" | "tool_result"; content?: string; name?: string; args?: Record<string, unknown> }) => void;
   onToken?: (token: string) => void;
-  onUsage?: (usage: Usage | undefined, durationMs: number) => void;
+  onUsage?: (usage: Usage | undefined, durationMs: number, contextInfo?: { usedTokens: number; maxTokens: number }) => void;
   onComplete?: (response: string) => void;
 }
 
@@ -21,6 +21,7 @@ export class Agent {
   private session: SessionLike;
   private maxIterations: number;
   private knownServerDescriptions: string;
+  private contextWindow: number;
 
   constructor(
     llm: LLMClient,
@@ -28,12 +29,14 @@ export class Agent {
     session: SessionLike,
     maxIterations = 10,
     knownServerDescriptions = "",
+    contextWindow = 128_000,
   ) {
     this.llm = llm;
     this.mcp = mcp;
     this.session = session;
     this.maxIterations = maxIterations;
     this.knownServerDescriptions = knownServerDescriptions;
+    this.contextWindow = contextWindow;
   }
 
   async run(userInput: string, hooks?: AgentHooks, signal?: AbortSignal): Promise<string> {
@@ -56,9 +59,10 @@ export class Agent {
       hooks?.onStep?.({ type: "thinking" });
 
       const tools = await this.mcp.listAllTools();
+      const systemPrompt = buildSystemPrompt(this.mcp, this.knownServerDescriptions);
 
       const messages: Message[] = [
-        { role: "system", content: buildSystemPrompt(this.mcp, this.knownServerDescriptions), timestamp: Date.now() },
+        { role: "system", content: systemPrompt, timestamp: Date.now() },
         ...this.session.getAll(),
       ];
 
@@ -66,7 +70,9 @@ export class Agent {
       const response = await this.llm.chat(messages, tools, streamCallbacks, signal);
       const elapsed = Date.now() - t0;
 
-      hooks?.onUsage?.(response.usage, elapsed);
+      const sessionTokens = (this.session as any).getEstimatedTokens?.() ?? 0;
+      const usedTokens = Math.ceil(systemPrompt.length / 4) + sessionTokens;
+      hooks?.onUsage?.(response.usage, elapsed, { usedTokens, maxTokens: this.contextWindow });
 
       if (response.type === "text") {
         if (!response.content.trim()) continue;

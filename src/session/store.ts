@@ -1,14 +1,25 @@
 import { Message } from "../agent/types.js";
 
-const MAX_TOKENS_ESTIMATE = 128_000;
+const DEFAULT_MAX_TOKENS = 128_000;
 const CHARS_PER_TOKEN = 4;
 
 export class SessionStore {
   private messages: Message[] = [];
   private maxChars: number;
+  private maxTokens: number;
 
-  constructor(maxTokens = MAX_TOKENS_ESTIMATE) {
+  constructor(maxTokens = DEFAULT_MAX_TOKENS) {
+    this.maxTokens = maxTokens;
     this.maxChars = maxTokens * CHARS_PER_TOKEN;
+  }
+
+  getEstimatedTokens(): number {
+    const totalChars = this.messages.reduce((sum, m) => sum + m.content.length, 0);
+    return Math.ceil(totalChars / CHARS_PER_TOKEN);
+  }
+
+  getMaxTokens(): number {
+    return this.maxTokens;
   }
 
   add(msg: Message): void {

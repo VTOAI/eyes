@@ -38,6 +38,7 @@ export class WecomAiBotGateway implements MessageGateway {
   private sessions: PerChatSessionRouter;
   private maxIterations: number;
   private knownServerDescriptions: string;
+  private contextWindow: number;
   private ws: WebSocket | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private authTimer: ReturnType<typeof setTimeout> | null = null;
@@ -50,6 +51,7 @@ export class WecomAiBotGateway implements MessageGateway {
     mcp: MCPRegistry,
     sessions: PerChatSessionRouter,
     maxIterations: number,
+    contextWindow: number,
     knownServerDescriptions: string,
   ) {
     this.name = name;
@@ -58,6 +60,7 @@ export class WecomAiBotGateway implements MessageGateway {
     this.mcp = mcp;
     this.sessions = sessions;
     this.maxIterations = maxIterations;
+    this.contextWindow = contextWindow;
     this.knownServerDescriptions = knownServerDescriptions;
   }
 
@@ -216,7 +219,7 @@ export class WecomAiBotGateway implements MessageGateway {
 
     const platform = this.name;
     const session = this.sessions.getSession(platform, chatid);
-    const agent = new Agent(this.llm, this.mcp, session, this.maxIterations, this.knownServerDescriptions);
+    const agent = new Agent(this.llm, this.mcp, session, this.maxIterations, this.knownServerDescriptions, this.contextWindow);
 
     // Must use the callback's req_id for the reply (server validates it)
     const callbackReqId = msg.headers?.req_id ?? msgid;

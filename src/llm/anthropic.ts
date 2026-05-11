@@ -51,10 +51,12 @@ function toAnthropicTools(tools: Tool[]): Anthropic.Messages.Tool[] {
 export class AnthropicClient implements LLMClient {
   private client: Anthropic;
   private model: string;
+  private maxOutputTokens: number;
 
-  constructor(apiKey: string, model: string) {
+  constructor(apiKey: string, model: string, maxOutputTokens = 4096) {
     this.client = new Anthropic({ apiKey });
     this.model = model;
+    this.maxOutputTokens = maxOutputTokens;
   }
 
   async chat(messages: Message[], tools: Tool[], callbacks?: StreamCallbacks, signal?: AbortSignal): Promise<LLMResponse> {
@@ -65,7 +67,7 @@ export class AnthropicClient implements LLMClient {
 
     const params: Anthropic.Messages.MessageCreateParams = {
       model: this.model,
-      max_tokens: 4096,
+      max_tokens: this.maxOutputTokens,
       messages: toAnthropicMessages(messages),
       tools: tools.length > 0 ? toAnthropicTools(tools) : undefined,
       ...(system ? { system } : {}),

@@ -127,6 +127,7 @@ export class WecomBotGateway implements MessageGateway {
   private sessions: PerChatSessionRouter;
   private maxIterations: number;
   private knownServerDescriptions: string;
+  private contextWindow: number;
   private server: Server | null = null;
   private accessToken: string | null = null;
   private tokenExpiry = 0;
@@ -139,6 +140,7 @@ export class WecomBotGateway implements MessageGateway {
     mcp: MCPRegistry,
     sessions: PerChatSessionRouter,
     maxIterations: number,
+    contextWindow: number,
     knownServerDescriptions: string,
   ) {
     this.name = name;
@@ -147,6 +149,7 @@ export class WecomBotGateway implements MessageGateway {
     this.mcp = mcp;
     this.sessions = sessions;
     this.maxIterations = maxIterations;
+    this.contextWindow = contextWindow;
     this.knownServerDescriptions = knownServerDescriptions;
     this.crypt = new WXBizMsgCrypt(config.token, config.encodingAesKey, config.corpid);
   }
@@ -264,7 +267,7 @@ export class WecomBotGateway implements MessageGateway {
 
   onMessage = async (msg: GatewayMessage, reply: (text: string) => Promise<void>): Promise<void> => {
     const session = this.sessions.getSession(msg.platform, msg.chatId);
-    const agent = new Agent(this.llm, this.mcp, session, this.maxIterations, this.knownServerDescriptions);
+    const agent = new Agent(this.llm, this.mcp, session, this.maxIterations, this.knownServerDescriptions, this.contextWindow);
 
     try {
       const response = await agent.run(msg.text);

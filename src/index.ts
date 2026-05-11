@@ -39,18 +39,18 @@ ${RESET}`;
 function createLLMClient(config: ReturnType<typeof loadConfig>): LLMClient {
   const { agent } = config;
   if (agent.llmType === "anthropic") {
-    return new AnthropicClient(agent.apiKey, agent.model);
+    return new AnthropicClient(agent.apiKey, agent.model, agent.maxOutputTokens);
   }
-  return new OpenAICompatibleClient(agent.apiKey, agent.baseURL, agent.model);
+  return new OpenAICompatibleClient(agent.apiKey, agent.baseURL, agent.model, agent.maxOutputTokens);
 }
 
-function formatTokens(n: number): string {
+export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
 
-function createAgentHooks(channels?: NotificationChannel[]): AgentHooks {
+function createAgentHooks(session: { getEstimatedTokens?(): number }, contextWindow: number, channels?: NotificationChannel[]): AgentHooks {
   let thinking = false;
   let thinkingTimer: ReturnType<typeof setInterval> | null = null;
   const frames = ["◌", "◍", "◎"];
@@ -122,13 +122,18 @@ function createAgentHooks(channels?: NotificationChannel[]): AgentHooks {
       }
       process.stdout.write(token);
     },
-    onUsage: (usage, durationMs) => {
+    onUsage: (usage, durationMs, contextInfo) => {
       const sec = (durationMs / 1000).toFixed(1);
+      const parts: string[] = [sec + "s"];
       if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
-        process.stdout.write(`  ${DIM}⎿ ${sec}s · ↑ ${formatTokens(usage.inputTokens)} · ↓ ${formatTokens(usage.outputTokens)}${RESET}\n`);
-      } else {
-        process.stdout.write(`  ${DIM}⎿ ${sec}s${RESET}\n`);
+        parts.push(`↑ ${formatTokens(usage.inputTokens)}`);
+        parts.push(`↓ ${formatTokens(usage.outputTokens)}`);
       }
+      if (contextInfo && contextInfo.maxTokens > 0) {
+        const pct = ((contextInfo.usedTokens / contextInfo.maxTokens) * 100).toFixed(1);
+        parts.push(`~${formatTokens(contextInfo.usedTokens)}/${formatTokens(contextInfo.maxTokens)} (${pct}%)`);
+      }
+      process.stdout.write(`  ${DIM}⎿ ${parts.join(" · ")}${RESET}\n`);
     },
     onComplete: channels?.length
       ? (response: string) => {
@@ -166,7 +171,7 @@ async function runSetupWizard(rl: ReturnType<typeof createInterface>): Promise<v
   if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
 
   const config = {
-    llm: { type: llmType, apiKey: apiKey.trim(), baseURL, model },
+    llm: { type: llmType, apiKey: apiKey.trim(), baseURL, model, contextWindow: 128_000, maxOutputTokens: 4096 },
     maxIterations: 10,
     mcpServers: {} as Record<string, never>,
   };
@@ -305,13 +310,14 @@ async function runServeCommand(config: AppConfig, daemon = false): Promise<void>
 
   const channels = await Promise.all(config.channels.map((c) => createChannel(c)));
   const gateways: MessageGateway[] = [];
-  const sessions = new PerChatSessionRouter();
+  const sessions = new PerChatSessionRouter(config.agent.contextWindow);
 
   for (const g of config.gateways) {
     try {
       const gateway = await createGateway(
         g, llm, mcp, sessions,
         config.agent.maxIterations,
+        config.agent.contextWindow,
         getKnownServerDescriptions(),
       );
       gateways.push(gateway);
@@ -479,15 +485,18 @@ async function main() {
 
   let sessionManager: SessionManager;
   try {
-    sessionManager = SessionManager.loadOrCreate(resumeId);
+    sessionManager = SessionManager.loadOrCreate(resumeId, config.agent.contextWindow);
   } catch (e: any) {
     console.log(`${RED}${e.message}${RESET}`);
     process.exit(1);
   }
-  const agent = new Agent(llm, mcp, sessionManager, config.agent.maxIterations, getKnownServerDescriptions());
+  const agent = new Agent(llm, mcp, sessionManager, config.agent.maxIterations, getKnownServerDescriptions(), config.agent.contextWindow);
 
   function getPrompt(): string {
-    return `${BOLD}>${RESET} `;
+    const used = sessionManager.getEstimatedTokens();
+    const max = sessionManager.getMaxTokens();
+    const pct = max > 0 ? ((used / max) * 100).toFixed(0) : "0";
+    return `${DIM}~${formatTokens(used)}/${formatTokens(max)} (${pct}%)${RESET}\n${BOLD}>${RESET} `;
   }
 
   mcp.registerLocalTool(
@@ -709,7 +718,7 @@ async function main() {
       const ac = new AbortController();
       currentAbort = ac;
       lastEscAt = 0; // Reset to prevent stale double-ESC from aborting new run
-      const hooks = createAgentHooks(channelInstances);
+      const hooks = createAgentHooks(sessionManager, config.agent.contextWindow, channelInstances);
 
       try {
         await agent.run(actualInput, hooks, ac.signal);

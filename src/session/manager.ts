@@ -5,10 +5,12 @@ import { Message, SessionMetadata } from "../agent/types.js";
 import { SessionStore } from "./store.js";
 
 const SESSIONS_DIR = join(homedir(), ".eyes", "sessions");
+const DEFAULT_MAX_TOKENS = 128_000;
 
 export class SessionManager {
   private sessions: Map<string, { metadata: SessionMetadata; store: SessionStore }> = new Map();
   private activeId!: string;
+  private maxTokens: number = DEFAULT_MAX_TOKENS;
 
   private constructor() {}
 
@@ -32,8 +34,9 @@ export class SessionManager {
     return sessions.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
   }
 
-  static loadOrCreate(resumeId?: string): SessionManager {
+  static loadOrCreate(resumeId?: string, maxTokens = DEFAULT_MAX_TOKENS): SessionManager {
     const mgr = new SessionManager();
+    mgr.maxTokens = maxTokens;
 
     if (!existsSync(SESSIONS_DIR)) {
       mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -49,7 +52,7 @@ export class SessionManager {
       try {
         const raw = readFileSync(join(SESSIONS_DIR, f), "utf-8");
         const data = JSON.parse(raw);
-        const store = new SessionStore();
+        const store = new SessionStore(maxTokens);
         store.load(data.messages ?? []);
         mgr.sessions.set(id, {
           metadata: {
@@ -94,7 +97,7 @@ export class SessionManager {
       createdAt: Date.now(),
       lastAccessedAt: Date.now(),
     };
-    this.sessions.set(id, { metadata, store: new SessionStore() });
+    this.sessions.set(id, { metadata, store: new SessionStore(this.maxTokens) });
     this.activeId = id;
     this.saveSession(id);
     return metadata;
@@ -161,6 +164,16 @@ export class SessionManager {
   clear(): void {
     const active = this.sessions.get(this.activeId);
     if (active) active.store.clear();
+  }
+
+  getEstimatedTokens(): number {
+    const active = this.sessions.get(this.activeId);
+    return active ? active.store.getEstimatedTokens() : 0;
+  }
+
+  getMaxTokens(): number {
+    const active = this.sessions.get(this.activeId);
+    return active ? active.store.getMaxTokens() : this.maxTokens;
   }
 
   save(): void {

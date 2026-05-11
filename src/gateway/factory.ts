@@ -10,6 +10,7 @@ export async function createGateway(
   mcp: MCPRegistry,
   sessions: PerChatSessionRouter,
   maxIterations: number,
+  contextWindow: number,
   knownServerDescriptions: string,
 ): Promise<MessageGateway> {
   switch (cfg.type) {
@@ -18,7 +19,7 @@ export async function createGateway(
       return new FeishuBotGateway(
         cfg.name,
         { appId: String(cfg.appId), appSecret: String(cfg.appSecret) },
-        llm, mcp, sessions, maxIterations, knownServerDescriptions,
+        llm, mcp, sessions, maxIterations, contextWindow, knownServerDescriptions,
       );
     }
     case "wecom-bot": {
@@ -33,7 +34,7 @@ export async function createGateway(
           encodingAesKey: String(cfg.encodingAesKey),
           port: typeof cfg.port === "number" ? cfg.port : undefined,
         },
-        llm, mcp, sessions, maxIterations, knownServerDescriptions,
+        llm, mcp, sessions, maxIterations, contextWindow, knownServerDescriptions,
       );
     }
     case "wecom-aibot": {
@@ -41,7 +42,7 @@ export async function createGateway(
       return new WecomAiBotGateway(
         cfg.name,
         { botId: String(cfg.botId), secret: String(cfg.secret) },
-        llm, mcp, sessions, maxIterations, knownServerDescriptions,
+        llm, mcp, sessions, maxIterations, contextWindow, knownServerDescriptions,
       );
     }
     default:
