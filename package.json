@@ -18,10 +18,13 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@larksuiteoapi/node-sdk": "^1.63.1",
     "@modelcontextprotocol/sdk": "^1.13.0",
-    "openai": "^4.93.0"
+    "@wecom/aibot-node-sdk": "^1.0.6",
+    "openai": "^4.93.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"

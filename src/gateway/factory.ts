@@ -36,6 +36,14 @@ export async function createGateway(
         llm, mcp, sessions, maxIterations, knownServerDescriptions,
       );
     }
+    case "wecom-aibot": {
+      const { WecomAiBotGateway } = await import("./wecom-aibot.js");
+      return new WecomAiBotGateway(
+        cfg.name,
+        { botId: String(cfg.botId), secret: String(cfg.secret) },
+        llm, mcp, sessions, maxIterations, knownServerDescriptions,
+      );
+    }
     default:
       throw new Error(`Unknown gateway type: ${cfg.type}`);
   }

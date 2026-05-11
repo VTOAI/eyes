@@ -47,6 +47,9 @@ export class Agent {
 
     const streamCallbacks = hooks ? { onToken: (t: string) => hooks.onToken?.(t) } : undefined;
 
+    let sameToolCount = 0;
+    let lastToolName = "";
+
     for (let i = 0; i < this.maxIterations; i++) {
       signal?.throwIfAborted();
 
@@ -79,6 +82,23 @@ export class Agent {
 
       // Handle tool call
       const tc = response.toolCall;
+
+      // Detect tool-calling loops: same tool + same args repeatedly → stop
+      const argKey = JSON.stringify(tc.args);
+      const toolKey = `${tc.name}:${argKey}`;
+      if (toolKey === lastToolName) {
+        sameToolCount++;
+      } else {
+        sameToolCount = 1;
+        lastToolName = toolKey;
+      }
+      if (sameToolCount >= 3) {
+        const msg = "已调用同一工具多次，请换个方式描述你的需求。";
+        this.session.add({ role: "assistant", content: msg, timestamp: Date.now() });
+        hooks?.onComplete?.(msg);
+        return msg;
+      }
+
       hooks?.onStep?.({ type: "tool_call", name: tc.name, args: tc.args });
 
       const result = await this.mcp.callTool(tc.name, tc.args);
@@ -120,16 +140,17 @@ function buildSystemPrompt(mcp: MCPRegistry, knownDescriptions: string): string 
     ? `\n\nCommon MCP servers you can install:\n${knownDescriptions}`
     : "";
 
-  return `You are an AI assistant with access to MCP (Model Context Protocol) tools.
-You can use these tools to query data, analyze systems, and help with operations tasks.
-When you need data, call the appropriate tool. Always explain what you're doing.
+  return `You are a helpful AI assistant.
+Reply directly to the user's message. Only call a tool when it is clearly necessary to fulfill the user's request.
+
+Important rules:
+- If the user just says hello, asks a general question, or wants to chat — respond with text, do NOT call any tool.
+- Only call tools when the user explicitly asks you to do something that requires external data or actions (query a database, read a file, search the web, etc.).
+- After calling a tool, review the result and provide a final text response to the user. Do not keep calling tools in a loop.
 
 ${installed}
 
 You have a built-in tool called "install_mcp_server" that can dynamically install
-new MCP servers during this conversation. If a user asks for a capability you do not
-currently have (database access, file operations, web search, browser automation, etc.),
-use install_mcp_server to add it, then use the newly installed server's tools.
-Only use install_mcp_server when the user explicitly asks for a new capability or
-server — do not preemptively install servers.${known}`;
+new MCP servers. Only use this when the user explicitly asks for a specific capability
+you don't currently have — never preemptively install servers.${known}`;
 }
