@@ -2,7 +2,7 @@
 
 ## 概述
 
-基于 TypeScript 的命令行 AI Agent，支持通用 MCP 工具扩展，兼容 OpenAI / Anthropic API，支持飞书/企业微信 Bot 网关和通知推送，具备上下文窗口管理和精确 token 计数。
+基于 TypeScript 的命令行 AI Agent，支持通用 MCP 工具扩展，兼容 OpenAI / Anthropic API，支持飞书/企业微信 Bot 网关、告警事件 Trigger 系统和通知推送，具备上下文窗口管理和精确 token 计数。
 
 ### Why CLI First
 
@@ -57,14 +57,20 @@
 │  └──────────────────┘                                           │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
-│  │               Gateway / Channel Layer                       │  │
+│  │               Gateway / Trigger / Channel Layer              │  │
 │  │  ┌──────────────────────────┐  ┌──────────────────────┐   │  │
-│  │  │ Message Gateway           │  │ Notification Channel  │   │  │
-│  │  │ ├─ FeishuBotGateway       │  │ ├─ FeishuWebhook      │   │  │
-│  │  │ ├─ WecomBotGateway        │  │ └─ WecomWebhook       │   │  │
-│  │  │ ├─ WecomAiBotGateway (WS) │  │                        │   │  │
-│  │  │ └─ 流式回复 + Markdown    │  │                        │   │  │
-│  │  └──────────────────────────┘  └──────────────────────┘   │  │
+│  │  │ Message Gateway           │  │ Trigger System        │   │  │
+│  │  │ ├─ FeishuBotGateway       │  │ ├─ TriggerServer      │   │  │
+│  │  │ ├─ WecomBotGateway        │  │ │  统一端口 + 路径路由 │   │  │
+│  │  │ ├─ WecomAiBotGateway (WS) │  │ ├─ FlashDutyReceiver  │   │  │
+│  │  │ └─ 流式回复 + Markdown    │  │ ├─ GenericReceiver    │   │  │
+│  │  └──────────────────────────┘  │ └─ 企微回调 + 会话延续 │   │  │
+│  │                                 └──────────────────────┘   │  │
+│  │  ┌──────────────────────────┐                              │  │
+│  │  │ Notification Channel      │                              │  │
+│  │  │ ├─ FeishuWebhook          │                              │  │
+│  │  │ └─ WecomWebhook           │                              │  │
+│  │  └──────────────────────────┘                              │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
@@ -175,6 +181,9 @@ type LLMResponse =
 
 ```json
 {
+  "serve": {
+    "port": 9095
+  },
   "llm": {
     "type": "openai | anthropic",
     "apiKey": "...",
@@ -196,6 +205,20 @@ type LLMResponse =
   },
   "gateways": [
     { "type": "feishu-bot", "name": "my-bot", "appId": "...", "appSecret": "..." }
+  ],
+  "triggers": [
+    {
+      "type": "flashduty",
+      "name": "prod-alerts",
+      "path": "/trigger/flashduty",
+      "notifyLabel": "wecom_users",
+      "messenger": {
+        "type": "wecom-app",
+        "corpid": "...",
+        "corpsecret": "...",
+        "agentId": "1000004"
+      }
+    }
   ],
   "channels": [
     { "type": "feishu-webhook", "name": "team-chat", "webhookUrl": "https://..." }
@@ -240,7 +263,91 @@ interface MessageGateway {
 
 所有 Gateway 通过 `PerChatSessionRouter` 管理会话，确保同平台同会话的消息共享上下文。上下文窗口限制通过 Agent 构造函数传递。
 
-### 7. Channel — 通知通道
+### 7. Trigger — 告警事件入口
+
+接收外部监控平台（FlashDuty、AlertManager、Grafana 等）的 webhook 推送，独立分析后通过 Messenger 推送给指定人员：
+
+```
+外部 webhook → TriggerServer (统一端口) → 解析适配器 → Agent 独立分析 → Messenger 推送
+                                                                       → Channel 推送
+```
+
+**统一 HTTP Server**：
+- 单端口（默认 9095，通过 `serve.port` 配置）
+- 按 URL path 路由到不同 Trigger：`POST /trigger/flashduty`、`POST /trigger/generic`
+- 支持 GET echostr 验证（企业微信回调 URL 认证）
+
+**核心接口**：
+
+```typescript
+interface AlertEvent {
+  source: string;
+  alertId: string;
+  severity: "critical" | "warning" | "info";
+  title: string;
+  description: string;
+  labels: Record<string, string>;
+  annotations: Record<string, string>;
+  startsAt: string;
+  raw: unknown;
+}
+
+interface AlertReceiver {
+  readonly name: string;
+  readonly path: string;
+  parse(body: Record<string, unknown>): AlertEvent[];
+  onAlert: (event: AlertEvent) => Promise<string>;
+  onMessage?: (userId: string, message: string) => Promise<string>;
+  decryptMessage?: (encrypted: string) => string;
+  verify?: (req, res) => boolean;
+}
+```
+
+**已实现**：
+
+| Trigger | 说明 |
+|---------|------|
+| `FlashDutyReceiver` | 解析 FlashDuty webhook，仅处理 `i_new` 事件，自动提取 labels 中的通知对象 |
+| `GenericReceiver` | 通用 JSONPath 适配器，通过 `jsonPath*` 配置字段映射，适配任意 webhook 格式 |
+
+**消息路由**：
+- `parse()` — 将原始 webhook body 解析为 `AlertEvent[]`
+- `onAlert()` — 触发独立 Agent 分析（新 SessionStore，中文 system prompt）
+- `onMessage()` — 用户回复后继续对话，复用已有会话上下文
+- `decryptMessage()` — 解密企业微信消息回调
+
+**告警分析流程**：
+1. 创建独立 `SessionStore`（不共享网关会话）
+2. 构建中文 system prompt，包含告警详情和诊断任务
+3. Agent 调用 MCP 工具查询相关系统/指标
+4. 输出企业微信兼容 Markdown（禁止表格，支持标题/加粗/列表/代码块）
+5. 会话持久化到 `~/.eyes/trigger-sessions/`，支持后续追问
+
+**去重 & 限流**：
+- `AlertDedup`：基于 `source:alertId` 在 cooldown 内去重（默认 300s）
+- `ConcurrencyLimiter`：最大并发分析数（默认 3）
+
+**会话延续**（追问）：
+- 首次分析后保存 SessionStore 到磁盘
+- 用户通过企业微信应用回复时，企业微信 POST 回调到 trigger 路径
+- 解密回调消息，提取用户 ID 和消息内容
+- 找到该用户的会话，继续 Agent 对话
+- 回复通过 Messenger 推送回用户
+
+### 8. Messenger — 应用消息推送
+
+通过企业微信应用主动向用户发送消息：
+
+```typescript
+interface Messenger {
+  readonly name: string;
+  send(to: string[], title: string, content: string): Promise<void>;
+}
+```
+
+**已实现**：`WecomAppMessenger` — 使用企业微信 `/cgi-bin/message/send` API 发送 Markdown 消息，自动按 4096 字节分段，支持 `callbackToken` + `callbackAesKey` 配置。
+
+### 9. Channel — 通知通道
 
 Agent 完成后主动向外部平台推送消息：
 
@@ -253,7 +360,7 @@ interface NotificationChannel {
 
 **已实现**：`FeishuWebhookChannel`、`WecomWebhookChannel` — 通过飞书/企业微信 Webhook URL 发送通知。LLM 可通过 `send_notification` 本地工具指定 channel 名称推送消息。
 
-### 8. PerChatSessionRouter
+### 10. PerChatSessionRouter
 
 Gateway 层的会话路由：
 
@@ -263,7 +370,7 @@ platform + chatId → Agent Session
 
 同一平台同会话的所有消息共享同一个 Agent Session，保持对话上下文。接收 `maxTokens` 参数并传递给内部 `SessionStore`，支持自动裁剪。
 
-### 9. eyes serve — 后台网关服务
+### 11. eyes serve — 后台网关服务
 
 ```
 eyes serve           # 后台启动（daemon 模式，PID 文件管理）
@@ -355,6 +462,19 @@ eyes/
 │   │   ├── wecom-bot.ts        # 企业微信机器人网关（HTTP Callback + 加解密）
 │   │   ├── wecom-aibot.ts      # 企业微信 AI Bot 网关（WebSocket + 流式回复）
 │   │   └── session-router.ts   # PerChatSessionRouter（含 maxTokens）
+│   ├── trigger/
+│   │   ├── types.ts            # AlertEvent / AlertReceiver 接口
+│   │   ├── factory.ts          # Trigger 工厂（动态 import）
+│   │   ├── server.ts           # 统一 HTTP Server + 路径路由、企微回调处理
+│   │   ├── analyzer.ts         # 告警分析（中文 prompt + 会话延续）
+│   │   ├── flashduty.ts        # FlashDuty webhook 适配器
+│   │   ├── generic.ts          # 通用 JSONPath webhook 适配器
+│   │   ├── dedup.ts            # 去重（AlertDedup） + 限流（ConcurrencyLimiter）
+│   │   ├── sessions.ts         # TriggerSessionManager（磁盘持久化）
+│   │   └── wecom-verify.ts     # 企业微信回调验证 + 解密
+│   ├── messenger/
+│   │   ├── types.ts            # Messenger 接口
+│   │   └── wecom.ts            # WecomAppMessenger（4096 字节分段）
 │   └── channel/
 │       ├── types.ts            # NotificationChannel 接口
 │       ├── factory.ts          # Channel 工厂
@@ -372,6 +492,10 @@ eyes/
 │   │   ├── session-manager.test.ts
 │   │   ├── session-prune-pairing.test.ts
 │   │   ├── session-store.test.ts
+│   │   ├── trigger-analyzer.test.ts
+│   │   ├── trigger-dedup.test.ts
+│   │   ├── trigger-flashduty.test.ts
+│   │   ├── trigger-generic.test.ts
 │   │   ├── wecom-aibot.test.ts
 │   │   ├── wecom-gateway.test.ts
 │   │   └── wecom-webhook.test.ts
@@ -389,17 +513,18 @@ eyes/
 
 | 层级 | 覆盖 | 工具 |
 |------|------|------|
-| 单元测试 | Agent hooks/abort、Session Store/Manager/Prune、LLM Client、MCP Registry、Config Loading、Feishu/Wecom Gateway/Webhook、Session Router | Vitest |
+| 单元测试 | Agent hooks/abort、Session Store/Manager/Prune、LLM Client、MCP Registry、Config Loading、Feishu/Wecom Gateway/Webhook、Session Router、Trigger/Dedup/Analyzer/FlashDuty/Generic | Vitest |
 | 集成测试 | Agent 循环流转（Mock LLM + MCP） | Vitest |
 | E2E（手动） | 真实连接 MCP Server 验证 | — |
 
-共 14 个测试文件，64 个测试用例，覆盖所有核心模块。
+共 18 个测试文件，88 个测试用例，覆盖所有核心模块。
 
 ---
 
 ## 后续规划
 
 - ~~企业微信 Gateway~~ ✅ 已完成（Bot + AI Bot 双模式）
+- ~~告警 Trigger 系统~~ ✅ 已完成（统一 HTTP Server + FlashDuty/Generic 适配器 + 企业微信 Messenger + 会话延续）
 - 更多 Gateway 适配（Slack、Discord、钉钉）
 - Redis 会话存储（支持多实例水平扩展）
 - Subagent 并行查询
