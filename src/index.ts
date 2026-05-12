@@ -15,6 +15,8 @@ import { Agent, AgentHooks } from "./agent/loop.js";
 import { isCommand, executeCommand, COMMANDS } from "./commands.js";
 import { NotificationChannel } from "./channel/types.js";
 import { MessageGateway } from "./gateway/types.js";
+import { AlertReceiver } from "./trigger/types.js";
+import { TriggerServer } from "./trigger/server.js";
 import { PerChatSessionRouter } from "./gateway/session-router.js";
 
 // ANSI escape codes
@@ -297,6 +299,7 @@ function isProcessRunning(pid: number): boolean {
 async function runServeCommand(config: AppConfig, daemon = false): Promise<void> {
   const { createGateway } = await import("./gateway/factory.js");
   const { createChannel } = await import("./channel/factory.js");
+  const { createTrigger } = await import("./trigger/factory.js");
 
   const llm = createLLMClient(config);
   const mcp = new MCPRegistry();
@@ -310,6 +313,7 @@ async function runServeCommand(config: AppConfig, daemon = false): Promise<void>
 
   const channels = await Promise.all(config.channels.map((c) => createChannel(c)));
   const gateways: MessageGateway[] = [];
+  const triggers: AlertReceiver[] = [];
   const sessions = new PerChatSessionRouter(config.agent.contextWindow);
 
   for (const g of config.gateways) {
@@ -333,11 +337,40 @@ async function runServeCommand(config: AppConfig, daemon = false): Promise<void>
     }
   }
 
-  if (!daemon) {
-    if (gateways.length === 0) {
-      console.log(`${YELLOW}No gateways configured. Add gateways to ~/.eyes/config.json.${RESET}`);
+  for (const t of config.triggers) {
+    try {
+      const trigger = await createTrigger(
+        t, llm, mcp, channels,
+        config.agent.contextWindow,
+        getKnownServerDescriptions(),
+      );
+      triggers.push(trigger);
+    } catch (e: any) {
+      if (!daemon) console.error(`${RED}Trigger "${t.name}" failed to create: ${e.message}${RESET}`);
     }
-    console.log(`${DIM}eyes serve running. ${gateways.length} gateway(s), ${channels.length} channel(s). Ctrl+C to stop.${RESET}\n`);
+  }
+
+  let triggerServer: TriggerServer | null = null;
+  if (triggers.length > 0) {
+    triggerServer = new TriggerServer(config.serve.port, triggers);
+    try {
+      await triggerServer.start();
+      if (!daemon) {
+        console.log(`Trigger server started on port ${config.serve.port}:`);
+        for (const t of triggers) {
+          console.log(`  ${t.name} (${t.path})`);
+        }
+      }
+    } catch (e: any) {
+      if (!daemon) console.error(`${RED}Trigger server failed to start: ${e.message}${RESET}`);
+    }
+  }
+
+  if (!daemon) {
+    if (gateways.length === 0 && triggers.length === 0) {
+      console.log(`${YELLOW}No gateways or triggers configured. Add them to ~/.eyes/config.json.${RESET}`);
+    }
+    console.log(`${DIM}eyes serve running. ${gateways.length} gateway(s), ${triggers.length} trigger(s), ${channels.length} channel(s). Ctrl+C to stop.${RESET}\n`);
   }
 
   writePid();
@@ -345,6 +378,9 @@ async function runServeCommand(config: AppConfig, daemon = false): Promise<void>
   const cleanup = async () => {
     for (const g of gateways) {
       await g.stop().catch(() => {});
+    }
+    if (triggerServer) {
+      await triggerServer.stop().catch(() => {});
     }
     await mcp.close();
     removePid();

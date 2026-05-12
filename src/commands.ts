@@ -91,17 +91,25 @@ function cmdSessions(ctx: CommandContext, args: string[]): string {
 }
 
 function cmdGateways(ctx: CommandContext): string {
-  const { gateways, channels } = ctx.config;
+  const { gateways, channels, triggers } = ctx.config;
   const lines: string[] = [];
 
-  if (gateways.length === 0 && channels.length === 0) {
-    return "No gateways or notification channels configured. Add them to ~/.eyes/config.json.";
+  if (gateways.length === 0 && channels.length === 0 && triggers.length === 0) {
+    return "No gateways, triggers, or notification channels configured. Add them to ~/.eyes/config.json.";
   }
 
   if (gateways.length > 0) {
     lines.push(`Gateways: ${gateways.length} configured`);
     for (const g of gateways) {
       lines.push(`  ${g.name} (${g.type})`);
+    }
+  }
+
+  if (triggers.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(`Triggers: ${triggers.length} configured`);
+    for (const t of triggers) {
+      lines.push(`  ${t.name} (${t.type}) — ${t.path}`);
     }
   }
 

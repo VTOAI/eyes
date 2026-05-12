@@ -75,40 +75,7 @@ export function parseXml(xml: string): Record<string, string> {
 
 // ── WeChat Work API ─────────────────────────────────────
 
-const WECOM_API = "https://qyapi.weixin.qq.com/cgi-bin";
-
-async function getAccessToken(corpid: string, corpsecret: string): Promise<string> {
-  const res = await fetch(`${WECOM_API}/gettoken?corpid=${corpid}&corpsecret=${corpsecret}`);
-  const data = (await res.json()) as { errcode: number; errmsg: string; access_token?: string };
-  if (data.errcode !== 0 || !data.access_token) {
-    throw new Error(`WeCom gettoken failed: ${data.errmsg} (${data.errcode})`);
-  }
-  return data.access_token;
-}
-
-async function sendWecomMessage(accessToken: string, data: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`${WECOM_API}/message/send?access_token=${accessToken}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  const result = (await res.json()) as { errcode: number; errmsg: string };
-  if (result.errcode !== 0) {
-    throw new Error(`WeCom send failed: ${result.errmsg} (${result.errcode})`);
-  }
-}
-
-async function sendWecomGroupMessage(accessToken: string, data: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`${WECOM_API}/appchat/send?access_token=${accessToken}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  const result = (await res.json()) as { errcode: number; errmsg: string };
-  if (result.errcode !== 0) {
-    throw new Error(`WeCom group send failed: ${result.errmsg} (${result.errcode})`);
-  }
-}
+import { getAccessToken, sendWecomMessage, sendWecomGroupMessage } from "../messenger/wecom.js";
 
 // ── Gateway ─────────────────────────────────────────────
 

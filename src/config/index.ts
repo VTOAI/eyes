@@ -23,11 +23,37 @@ export interface ChannelConfig {
   [key: string]: unknown;
 }
 
+export interface ServeConfig {
+  port: number;
+}
+
+export interface TriggerConfig {
+  type: string;
+  name: string;
+  path: string;
+  channels?: string[];
+  cooldownSeconds?: number;
+  maxConcurrent?: number;
+  maxIterations?: number;
+  notifyLabel?: string;
+  messenger?: {
+    type: string;
+    corpid: string;
+    corpsecret: string;
+    agentId: string | number;
+    callbackToken?: string;
+    callbackAesKey?: string;
+  };
+  [key: string]: unknown;
+}
+
 export interface AppConfig {
   agent: AgentConfig;
+  serve: ServeConfig;
   mcpServers: MCPServerConfig[];
   gateways: GatewayConfig[];
   channels: ChannelConfig[];
+  triggers: TriggerConfig[];
 }
 
 function homeConfigDir(): string {
@@ -92,6 +118,8 @@ interface RawConfigJson {
   }>;
   gateways?: Array<Record<string, unknown>>;
   channels?: Array<Record<string, unknown>>;
+  triggers?: Array<Record<string, unknown>>;
+  serve?: { port?: number };
 }
 
 function loadConfigJson(): RawConfigJson | null {
@@ -212,6 +240,13 @@ export function loadConfig(): AppConfig {
     ...Object.fromEntries(Object.entries(c).filter(([k]) => k !== "type" && k !== "name")),
   })) as ChannelConfig[];
 
+  const triggers = (rawCfg?.triggers ?? []).map((t) => ({
+    type: String(t.type ?? ""),
+    name: String(t.name ?? t.type ?? ""),
+    path: String(t.path ?? `/trigger/${t.type}`),
+    ...Object.fromEntries(Object.entries(t).filter(([k]) => !["type", "name", "path"].includes(k))),
+  })) as TriggerConfig[];
+
   return {
     agent: {
       llmType,
@@ -222,8 +257,12 @@ export function loadConfig(): AppConfig {
       contextWindow,
       maxOutputTokens,
     },
+    serve: {
+      port: rawCfg?.serve?.port ?? 9095,
+    },
     mcpServers: resolveMCPServers(rawCfg),
     gateways,
     channels,
+    triggers,
   };
 }
